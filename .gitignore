@@ -1,0 +1,97 @@
+# =============================================================================
+# Sengoku Basara 4 Sumeragi PC Port - Git Ignore
+# Open-Source Native Runtime & Vulkan Renderer Engine
+# Open-Source Community Native Preservation Engine
+# =============================================================================
+
+# Extraction pipeline & internal workflow tools (Keep 100% Private!)
+extracted_game/
+out/
+build/
+user/
+backup*/
+release_package/
+tools/
+scripts/
+relinker/
+temp_ctr/
+patches/
+launcher/
+dlss_bridge/
+scratch/
+.gemini/
+.vscode/
+.idea/
+_ref_razz/
+
+# Intermediate compilation files
+*.ninja
+*.ninja_deps
+*.ninja_log
+*.o
+*.obj
+*.a
+*.lib
+
+# Binaries, libraries, and archive packages (Never commit binaries!)
+*.exe
+*.dll
+*.bin
+*.iso
+*.pkg
+*.cpk
+*.zip
+*.7z
+*.tar*
+
+# Logs, dumps, traces, and screenshots
+*.log
+*.err
+*.out
+*.dmp
+*.mon
+*.png
+*.jpg
+*.tmp
+*.bak
+__pycache__/
+*.pyc
+*.spec
+
+# Block all internal Python, PowerShell, Shell scripts, and text files everywhere
+*.py
+*.ps1
+*.sh
+*.bat
+*.txt
+bbport.ini
+play_basara.bat
+
+# Allow specific core source folders
+!src/**
+!gpu/**
+!packaging/windows/icons/basara4.ico
+!packaging/windows/*.rc
+!packaging/windows/*.manifest
+
+# Re-block all scripts/binaries/tools/docs/tests everywhere
+src/**/*.py
+gpu/**/*.py
+gpu/**/*.sh
+gpu/**/*.txt
+**/tests/**
+**/tools/**
+**/docs/**
+**/examples/**
+**/patches/**
+tests/
+docs/
+
+# Whitelist allowed root files
+!launcher.py
+!Play_Basara4.bat
+!basara.ini
+!CMakeLists.txt
+!README.md
+!README.id.md
+!.gitignore
