@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sengoku Basara 4 Sumeragi — PC Native Port
-High-End AAA Style Graphical Launcher & Configuration Engine
+AAA Cinematic Graphical Launcher & Configuration Engine
 
 Ported & Customized by krixsan
 """
@@ -14,28 +14,37 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-# --- Enable Windows High-DPI Awareness ---
+# Try importing PIL for high-fidelity background image processing
+try:
+    from PIL import Image, ImageDraw, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
+# Enable Windows High-DPI Awareness
 try:
     if sys.platform == "win32":
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
     pass
 
-# --- Theme Palette (Obsidian, Samurai Crimson & Emperor Gold) ---
-THEME_BG = "#090a0f"           # Deep obsidian void
-THEME_CARD = "#12141c"         # Dark graphite card
-THEME_CARD_HOVER = "#171924"
-THEME_BORDER = "#222638"       # Subtle structural line
-THEME_CRIMSON = "#d90429"      # Samurai Blood Red
-THEME_CRIMSON_HOVER = "#ef233c"# Vibrant Fire Red
-THEME_CRIMSON_DARK = "#7a0018"
-THEME_GOLD = "#d4af37"         # Authentic Imperial Gold
+# --- Theme Configuration ---
+WIDTH = 820
+HEIGHT = 600
+
+THEME_BG = "#08090d"
+THEME_CARD = "#0f1118"
+THEME_CARD_BORDER = "#232838"
+THEME_CRIMSON = "#d90429"
+THEME_CRIMSON_HOVER = "#ef233c"
+THEME_CRIMSON_DARK = "#660014"
+THEME_GOLD = "#d4af37"
 THEME_GOLD_BRIGHT = "#f6c445"
-THEME_GOLD_MUTED = "#997b28"
-THEME_TEXT_WHITE = "#f8fafc"   # Pure crisp typography
-THEME_TEXT_MUTED = "#8e95a5"
-THEME_SUCCESS = "#10b981"      # Emerald readiness
-THEME_ERROR = "#f43f5e"        # Rose warning
+THEME_GOLD_MUTED = "#91762c"
+THEME_TEXT_WHITE = "#ffffff"
+THEME_TEXT_MUTED = "#94a3b8"
+THEME_SUCCESS = "#10b981"
+THEME_ERROR = "#f43f5e"
 
 FONT_FAMILY = "Segoe UI"
 FONT_JAPANESE = "MS Gothic" if sys.platform == "win32" else "Segoe UI"
@@ -136,9 +145,9 @@ def verify_game_installation():
 
 
 class ModernSwitch(tk.Canvas):
-    """Sleek minimalist iOS/AAA game style toggle switch."""
-    def __init__(self, parent, variable, text="", command=None, width=44, height=22, bg=THEME_CARD):
-        super().__init__(parent, width=width + 120, height=height + 4, bg=bg, highlightthickness=0, cursor="hand2")
+    """Sleek minimalist toggle switch."""
+    def __init__(self, parent, variable, text="", command=None, width=42, height=20, bg=THEME_CARD):
+        super().__init__(parent, width=width + 150, height=height + 4, bg=bg, highlightthickness=0, cursor="hand2")
         self.var = variable
         self.label_text = text
         self.cmd = command
@@ -160,9 +169,8 @@ class ModernSwitch(tk.Canvas):
         val = self.var.get()
         w, h = self.sw_w, self.sw_h
 
-        # Draw rounded track
-        track_color = THEME_CRIMSON if val else "#2a2e40"
-        border_color = THEME_GOLD if val else "#383d54"
+        track_color = THEME_CRIMSON if val else "#242838"
+        border_color = THEME_GOLD if val else "#383f56"
         r = h // 2
 
         self.create_arc((0, 2, h, h + 2), start=90, extent=180, fill=track_color, outline=border_color)
@@ -171,7 +179,6 @@ class ModernSwitch(tk.Canvas):
         self.create_line((r, 2, w - r, 2), fill=border_color)
         self.create_line((r, h + 2, w - r, h + 2), fill=border_color)
 
-        # Draw thumb knob
         knob_x = (w - r - 2) if val else (r + 2)
         knob_color = "#ffffff" if val else "#9ca3af"
         self.create_oval(
@@ -180,7 +187,6 @@ class ModernSwitch(tk.Canvas):
             fill=knob_color, outline=""
         )
 
-        # Draw text label
         self.create_text(
             w + 12, h // 2 + 2,
             text=self.label_text,
@@ -194,7 +200,7 @@ class BasaraAaaLauncher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sengoku Basara 4 Sumeragi — PC Native Port")
-        self.geometry("700x610")
+        self.geometry(f"{WIDTH}x{HEIGHT}")
         self.resizable(False, False)
         self.configure(bg=THEME_BG)
 
@@ -208,15 +214,15 @@ class BasaraAaaLauncher(tk.Tk):
 
         self.center_on_screen()
         self.load_configuration()
+        self.prepare_background()
         self.build_gui()
         self.evaluate_system_readiness()
 
     def center_on_screen(self):
         self.update_idletasks()
-        w, h = 700, 610
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        self.geometry(f"{w}x{h}+{(sw - w)//2}+{(sh - h)//2}")
+        self.geometry(f"{WIDTH}x{HEIGHT}+{(sw - WIDTH)//2}+{(sh - HEIGHT)//2}")
 
     def load_configuration(self):
         ini = read_ini()
@@ -225,92 +231,152 @@ class BasaraAaaLauncher(tk.Tk):
         self.fps_var = tk.StringVar(value=ini.get("fps_limit", "144"))
         self.skip_intro_var = tk.BooleanVar(value=ini.get("skip_intro", "0") == "1")
         self.show_fps_var = tk.BooleanVar(value=ini.get("show_fps", "1") == "1")
+        self.is_ready = False
+
+    def prepare_background(self):
+        self.bg_photo = None
+        if not HAS_PIL:
+            return
+
+        candidates = [
+            os.path.join("extracted_game", "app0", "sce_sys", "pic1.png"),
+            os.path.join("extracted_game", "app0", "sce_sys", "pic0.png"),
+            os.path.join("app0", "sce_sys", "pic1.png"),
+            os.path.join("app0", "sce_sys", "pic0.png"),
+        ]
+
+        found_path = None
+        for p in candidates:
+            if os.path.isfile(p):
+                found_path = p
+                break
+
+        try:
+            if found_path:
+                img = Image.open(found_path).convert("RGBA")
+                # Scale and center crop to fit WIDTH x HEIGHT
+                target_ratio = WIDTH / HEIGHT
+                img_ratio = img.width / img.height
+                if img_ratio > target_ratio:
+                    new_w = int(img.height * target_ratio)
+                    left = (img.width - new_w) // 2
+                    img = img.crop((left, 0, left + new_w, img.height))
+                else:
+                    new_h = int(img.width / target_ratio)
+                    top = (img.height - new_h) // 2
+                    img = img.crop((0, top, img.width, top + new_h))
+                img = img.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+            else:
+                # Fallback samurai dark aesthetic gradient
+                img = Image.new("RGBA", (WIDTH, HEIGHT), (12, 14, 20, 255))
+                draw = ImageDraw.Draw(img)
+                for y in range(HEIGHT):
+                    r = int(18 + (35 - 18) * (1.0 - y / HEIGHT))
+                    g = int(8 + (12 - 8) * (1.0 - y / HEIGHT))
+                    b = int(14 + (24 - 14) * (y / HEIGHT))
+                    draw.line([(0, y), (WIDTH, y)], fill=(r, g, b, 255))
+
+            # Composite dark vignette overlay so UI controls are perfectly legible
+            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            for y in range(HEIGHT):
+                # Darker top header, semi-transparent artwork mid, darker bottom controls
+                if y < 130:
+                    alpha = int(150 + (130 - y) * 0.45)
+                elif y < 270:
+                    alpha = 115
+                else:
+                    alpha = int(115 + (y - 270) * 0.45)
+                alpha = min(235, max(100, alpha))
+                draw.line([(0, y), (WIDTH, y)], fill=(6, 7, 12, alpha))
+
+            final_img = Image.alpha_composite(img, overlay)
+            self.bg_photo = ImageTk.PhotoImage(final_img)
+        except Exception as e:
+            print(f"Background image generation notice: {e}")
+            self.bg_photo = None
 
     def build_gui(self):
-        # =====================================================================
-        # TOP HEADER: BRANDING & KRIXSAN CREDITS
-        # =====================================================================
-        header = tk.Frame(self, bg="#07070a", padx=30, pady=16)
-        header.pack(fill="x")
+        # Master Canvas for Background
+        self.canvas = tk.Canvas(self, width=WIDTH, height=HEIGHT, bg=THEME_BG, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
 
-        # Top Bar: Version tag (Left) & Creator signature (Right)
-        top_meta = tk.Frame(header, bg="#07070a")
-        top_meta.pack(fill="x", pady=(0, 4))
+        if self.bg_photo:
+            self.canvas.create_image(0, 0, image=self.bg_photo, anchor="nw")
 
-        tag_badge = tk.Label(
-            top_meta,
-            text="UPDATE 1  •  VULKAN 1.3 NATIVE",
+        # =====================================================================
+        # HEADER SECTION (TITLES, BADGES, AND KRIXSAN WATERMARK)
+        # =====================================================================
+        # Header background bar overlay
+        self.canvas.create_rectangle(0, 0, WIDTH, 120, fill="#040508", outline="", stipple="" if not self.bg_photo else "")
+
+        # Top Meta Info
+        self.canvas.create_text(
+            35, 24,
+            text="UPDATE 1  •  VULKAN 1.3 NATIVE RENDERER",
             font=(FONT_FAMILY, 8, "bold"),
-            fg="#71717a",
-            bg="#18181b",
-            padx=8,
-            pady=2
+            fill="#71717a",
+            anchor="w"
         )
-        tag_badge.pack(side="left")
 
-        # Ported & Customized by krixsan (Requested Mandatory Signature)
-        credit_lbl = tk.Label(
-            top_meta,
+        # Mandatory Credit at Top Right
+        self.canvas.create_text(
+            WIDTH - 35, 24,
             text="✦  Ported & Customized by krixsan  ✦",
             font=(FONT_FAMILY, 9, "bold italic"),
-            fg=THEME_GOLD,
-            bg="#07070a"
+            fill=THEME_GOLD,
+            anchor="e"
         )
-        credit_lbl.pack(side="right")
 
-        # Japanese Traditional Logo Mark
-        jp_title = tk.Label(
-            header,
+        # Japanese Logo Title
+        self.canvas.create_text(
+            35, 48,
             text="戦 国 B A S A R A 4   皇",
             font=(FONT_JAPANESE, 10, "bold"),
-            fg=THEME_CRIMSON,
-            bg="#07070a"
+            fill=THEME_CRIMSON,
+            anchor="w"
         )
-        jp_title.pack(anchor="w", pady=(6, 0))
 
-        # Main Majestic Title
-        main_title = tk.Label(
-            header,
+        # Main Majestic Title with Shadow
+        self.canvas.create_text(
+            36, 76,
             text="SENGOKU BASARA 4 SUMERAGI",
-            font=(FONT_FAMILY, 19, "bold"),
-            fg=THEME_TEXT_WHITE,
-            bg="#07070a"
+            font=(FONT_FAMILY, 21, "bold"),
+            fill="#000000",
+            anchor="w"
         )
-        main_title.pack(anchor="w")
+        self.canvas.create_text(
+            35, 75,
+            text="SENGOKU BASARA 4 SUMERAGI",
+            font=(FONT_FAMILY, 21, "bold"),
+            fill=THEME_TEXT_WHITE,
+            anchor="w"
+        )
 
-        sub_desc = tk.Label(
-            header,
-            text="PC DEFINITIVE EDITION  —  HIGH PERFORMANCE RECONSTRUCTION",
+        self.canvas.create_text(
+            35, 100,
+            text="PC DEFINITIVE EDITION  —  HIGH PERFORMANCE EMULATION & ENGINE RECONSTRUCTION",
             font=(FONT_FAMILY, 8, "bold"),
-            fg=THEME_GOLD_MUTED,
-            bg="#07070a"
+            fill=THEME_GOLD_MUTED,
+            anchor="w"
         )
-        sub_desc.pack(anchor="w", pady=(1, 0))
 
-        # Dual-tone Samurai Blade Divider
-        divider = tk.Canvas(self, height=3, bg=THEME_BG, highlightthickness=0)
-        divider.pack(fill="x")
-        divider.create_line(0, 1, 350, 1, fill=THEME_CRIMSON, width=2)
-        divider.create_line(350, 1, 700, 1, fill=THEME_GOLD, width=2)
+        # Samurai Katana Blade Accent Line
+        self.canvas.create_line(0, 120, WIDTH // 2, 120, fill=THEME_CRIMSON, width=2)
+        self.canvas.create_line(WIDTH // 2, 120, WIDTH, 120, fill=THEME_GOLD, width=2)
 
         # =====================================================================
-        # MAIN BODY CONTAINER
+        # SYSTEM READINESS CARD
         # =====================================================================
-        body = tk.Frame(self, bg=THEME_BG, padx=28, pady=16)
-        body.pack(fill="both", expand=True)
-
-        # ---------------------------------------------------------------------
-        # 1. System Readiness Card
-        # ---------------------------------------------------------------------
-        self.status_card = tk.Frame(body, bg=THEME_CARD, highlightthickness=1, highlightbackground=THEME_BORDER, padx=16, pady=10)
-        self.status_card.pack(fill="x", pady=(0, 14))
+        self.status_card = tk.Frame(self, bg=THEME_CARD, highlightthickness=1, highlightbackground=THEME_CARD_BORDER, padx=16, pady=9)
+        self.canvas.create_window(WIDTH // 2, 155, window=self.status_card, width=WIDTH - 70, height=44)
 
         self.status_dot = tk.Label(self.status_card, text="●", font=(FONT_FAMILY, 11), fg=THEME_SUCCESS, bg=THEME_CARD)
         self.status_dot.pack(side="left", padx=(0, 10))
 
         self.status_text = tk.Label(
             self.status_card,
-            text="Checking game environment...",
+            text="Verifying game environment...",
             font=(FONT_FAMILY, 9),
             fg=THEME_TEXT_WHITE,
             bg=THEME_CARD,
@@ -318,143 +384,157 @@ class BasaraAaaLauncher(tk.Tk):
         )
         self.status_text.pack(side="left")
 
-        # ---------------------------------------------------------------------
-        # 2. Settings Grid (Display & Gameplay Cards)
-        # ---------------------------------------------------------------------
-        settings_frame = tk.Frame(body, bg=THEME_BG)
-        settings_frame.pack(fill="x", pady=(0, 14))
+        # =====================================================================
+        # SETTINGS CONTROL PANEL (SEMI-TRANSPARENT CARD STYLE)
+        # =====================================================================
+        settings_box = tk.Frame(self, bg=THEME_CARD, highlightthickness=1, highlightbackground=THEME_CARD_BORDER, padx=24, pady=16)
+        self.canvas.create_window(WIDTH // 2, 310, window=settings_box, width=WIDTH - 70, height=220)
 
-        # Card A: Video & Graphics
-        card_a = tk.Frame(settings_frame, bg=THEME_CARD, highlightthickness=1, highlightbackground=THEME_BORDER, padx=16, pady=14)
-        card_a.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        # Section Header
+        sec_header = tk.Frame(settings_box, bg=THEME_CARD)
+        sec_header.pack(fill="x", pady=(0, 12))
 
-        sec_a_lbl = tk.Label(card_a, text="DISPLAY & RESOLUTION", font=(FONT_FAMILY, 10, "bold"), fg=THEME_GOLD, bg=THEME_CARD)
-        sec_a_lbl.pack(anchor="w", pady=(0, 10))
+        tk.Label(
+            sec_header,
+            text="ENGINE PREFERENCES & DISPLAY CONFIGURATION",
+            font=(FONT_FAMILY, 10, "bold"),
+            fg=THEME_GOLD,
+            bg=THEME_CARD
+        ).pack(side="left")
 
-        # Resolution Dropdown
-        res_row = tk.Frame(card_a, bg=THEME_CARD)
-        res_row.pack(fill="x", pady=4)
-        tk.Label(res_row, text="Target Display:", font=(FONT_FAMILY, 9), fg=THEME_TEXT_MUTED, bg=THEME_CARD).pack(side="left")
+        tk.Label(
+            sec_header,
+            text="In-game overlay: [Insert] or [L3 + R3]",
+            font=(FONT_FAMILY, 8),
+            fg=THEME_TEXT_MUTED,
+            bg=THEME_CARD
+        ).pack(side="right")
 
-        # Styled combobox
+        # Two-column grid inside card
+        cols_frame = tk.Frame(settings_box, bg=THEME_CARD)
+        cols_frame.pack(fill="both", expand=True)
+
+        col_left = tk.Frame(cols_frame, bg=THEME_CARD)
+        col_left.pack(side="left", fill="both", expand=True, padx=(0, 15))
+
+        col_right = tk.Frame(cols_frame, bg=THEME_CARD)
+        col_right.pack(side="right", fill="both", expand=True, padx=(15, 0))
+
+        # Combobox styling
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(
             "TCombobox",
-            fieldbackground="#1c1f2e",
-            background="#252a3d",
+            fieldbackground="#161924",
+            background="#202434",
             foreground="#f8fafc",
             arrowcolor=THEME_GOLD,
-            bordercolor=THEME_BORDER,
-            darkcolor="#1c1f2e",
-            lightcolor="#1c1f2e"
+            bordercolor=THEME_CARD_BORDER,
+            darkcolor="#161924",
+            lightcolor="#161924"
         )
 
+        # Resolution
+        res_row = tk.Frame(col_left, bg=THEME_CARD)
+        res_row.pack(fill="x", pady=4)
+        tk.Label(res_row, text="Target Resolution:", font=(FONT_FAMILY, 9), fg=THEME_TEXT_MUTED, bg=THEME_CARD).pack(side="left")
         res_cb = ttk.Combobox(
             res_row,
             textvariable=self.res_var,
             values=["1280x720", "1920x1080", "2560x1440", "3840x2160"],
             state="readonly",
-            width=13,
+            width=14,
             style="TCombobox"
         )
         res_cb.pack(side="right")
 
-        # FPS Limit Dropdown
-        fps_row = tk.Frame(card_a, bg=THEME_CARD)
-        fps_row.pack(fill="x", pady=6)
+        # Framerate
+        fps_row = tk.Frame(col_left, bg=THEME_CARD)
+        fps_row.pack(fill="x", pady=4)
         tk.Label(fps_row, text="Frame Pacing:", font=(FONT_FAMILY, 9), fg=THEME_TEXT_MUTED, bg=THEME_CARD).pack(side="left")
-
         fps_cb = ttk.Combobox(
             fps_row,
             textvariable=self.fps_var,
             values=["60", "120", "144", "0"],
             state="readonly",
-            width=13,
+            width=14,
             style="TCombobox"
         )
         fps_cb.pack(side="right")
 
-        # Fullscreen Toggle Switch
-        fs_switch = ModernSwitch(card_a, self.fullscreen_var, text="Fullscreen Display", bg=THEME_CARD)
-        fs_switch.pack(anchor="w", pady=(8, 2))
+        # Fullscreen Switch
+        fs_switch = ModernSwitch(col_left, self.fullscreen_var, text="Fullscreen Display", bg=THEME_CARD)
+        fs_switch.pack(anchor="w", pady=(8, 0))
 
-        # Card B: Experience & Tweaks
-        card_b = tk.Frame(settings_frame, bg=THEME_CARD, highlightthickness=1, highlightbackground=THEME_BORDER, padx=16, pady=14)
-        card_b.pack(side="right", fill="both", expand=True, padx=(8, 0))
+        # Skip Intro Switch
+        intro_switch = ModernSwitch(col_right, self.skip_intro_var, text="Fast Boot (Skip Opening Movie)", bg=THEME_CARD)
+        intro_switch.pack(anchor="w", pady=4)
 
-        sec_b_lbl = tk.Label(card_b, text="ENGINE & EXPERIENCE", font=(FONT_FAMILY, 10, "bold"), fg=THEME_GOLD, bg=THEME_CARD)
-        sec_b_lbl.pack(anchor="w", pady=(0, 10))
+        # FPS Counter Switch
+        fps_switch = ModernSwitch(col_right, self.show_fps_var, text="On-Screen FPS Counter", bg=THEME_CARD)
+        fps_switch.pack(anchor="w", pady=4)
 
-        intro_switch = ModernSwitch(card_b, self.skip_intro_var, text="Fast Boot (Skip Movie)", bg=THEME_CARD)
-        intro_switch.pack(anchor="w", pady=(4, 6))
-
-        fps_switch = ModernSwitch(card_b, self.show_fps_var, text="On-Screen FPS Counter", bg=THEME_CARD)
-        fps_switch.pack(anchor="w", pady=(4, 6))
-
-        hint_box = tk.Frame(card_b, bg="#181a24", padx=8, pady=5)
-        hint_box.pack(fill="x", pady=(10, 0))
-        tk.Label(
-            hint_box,
-            text="In-Game Menu Shortcut: [Insert] or [L3 + R3]",
+        # Sub-hint
+        sync_hint = tk.Label(
+            col_right,
+            text="Preferences auto-sync to basara.ini on launch.",
             font=(FONT_FAMILY, 8),
-            fg=THEME_TEXT_MUTED,
-            bg="#181a24"
-        ).pack(anchor="w")
+            fg="#64748b",
+            bg=THEME_CARD
+        )
+        sync_hint.pack(anchor="w", pady=(8, 0))
 
-        # ---------------------------------------------------------------------
-        # 3. Action Zone: Majestic Samurai Blade Launch Button
-        # ---------------------------------------------------------------------
-        self.btn_canvas = tk.Canvas(body, height=58, bg=THEME_BG, highlightthickness=0, cursor="hand2")
-        self.btn_canvas.pack(fill="x", pady=(8, 12))
+        # =====================================================================
+        # LAUNCH ACTION BUTTON (GLOWING CRIMSON WITH KATANA EMBLEM)
+        # =====================================================================
+        self.btn_canvas = tk.Canvas(self, width=WIDTH - 70, height=62, bg=THEME_BG, highlightthickness=0, cursor="hand2")
+        self.canvas.create_window(WIDTH // 2, 475, window=self.btn_canvas)
 
         self.btn_canvas.bind("<Enter>", self.on_btn_hover)
         self.btn_canvas.bind("<Leave>", self.on_btn_leave)
         self.btn_canvas.bind("<Button-1>", self.on_btn_click)
 
-        self.is_ready = False
         self.draw_launch_button(hover=False)
 
-        # ---------------------------------------------------------------------
-        # 4. Footer Branding & Legal Note
-        # ---------------------------------------------------------------------
-        footer = tk.Frame(body, bg=THEME_BG)
-        footer.pack(fill="x", side="bottom")
+        # =====================================================================
+        # BOTTOM FOOTER (LEGAL & KRIXSAN WATERMARK)
+        # =====================================================================
+        self.canvas.create_line(35, 545, WIDTH - 35, 545, fill="#1c202e", width=1)
 
-        legal_lbl = tk.Label(
-            footer,
-            text="CAPCOM CO., LTD. ALL RIGHTS RESERVED  •  FAN EMULATION & PRESERVATION PROJECT",
+        # Legal Note (Left)
+        self.canvas.create_text(
+            35, 570,
+            text="CAPCOM CO., LTD.  •  SENGOKU BASARA IS A REGISTERED TRADEMARK  •  NON-COMMERCIAL RESEARCH PORT",
             font=(FONT_FAMILY, 7),
-            fg="#52525b",
-            bg=THEME_BG
+            fill="#52525b",
+            anchor="w"
         )
-        legal_lbl.pack(side="left")
 
-        sign_lbl = tk.Label(
-            footer,
-            text="ENGINEERED BY KRIXSAN",
-            font=(FONT_FAMILY, 7, "bold"),
-            fg=THEME_GOLD_MUTED,
-            bg=THEME_BG
+        # Mandatory Footer Watermark (Right)
+        self.canvas.create_text(
+            WIDTH - 35, 570,
+            text="Ported & Customized by krixsan",
+            font=(FONT_FAMILY, 9, "bold italic"),
+            fill=THEME_GOLD_BRIGHT,
+            anchor="e"
         )
-        sign_lbl.pack(side="right")
 
     def draw_launch_button(self, hover=False):
         self.btn_canvas.delete("all")
-        w = 644
-        h = 56
+        w = WIDTH - 70
+        h = 60
         r = 12
 
         if not self.is_ready:
-            fill_color = "#1f222e"
-            border_color = "#2d3244"
-            text_color = "#555b6e"
-            btn_text = "🔒   GAME ASSETS OR BINARY MISSING"
+            fill_color = "#171a24"
+            border_color = "#272d3f"
+            text_color = "#555f75"
+            btn_text = "🔒   SETUP REQUIRED — MISSING GAME COMPONENTS"
         else:
             fill_color = THEME_CRIMSON_HOVER if hover else THEME_CRIMSON
             border_color = THEME_GOLD if hover else THEME_CRIMSON_DARK
             text_color = "#ffffff"
-            btn_text = "⚔     LAUNCH SENGOKU BASARA 4     ⚔"
+            btn_text = "⚔      LAUNCH SENGOKU BASARA 4 SUMERAGI      ⚔"
 
         # Rounded button polygon
         points = [
@@ -467,14 +547,20 @@ class BasaraAaaLauncher(tk.Tk):
         ]
         self.btn_canvas.create_polygon(points, fill=fill_color, outline=border_color, width=2, smooth=True)
 
-        # Accent Gold Corner Notches for Samurai AAA Aesthetic
+        # Samurai Gold Edge Corner Accents
         if self.is_ready:
-            # Top-left & Bottom-right gold accents
-            self.btn_canvas.create_line(14, 8, 30, 8, fill=THEME_GOLD, width=2)
-            self.btn_canvas.create_line(14, 8, 14, 20, fill=THEME_GOLD, width=2)
-            self.btn_canvas.create_line(w - 14, h - 8, w - 30, h - 8, fill=THEME_GOLD, width=2)
-            self.btn_canvas.create_line(w - 14, h - 8, w - 14, h - 20, fill=THEME_GOLD, width=2)
+            self.btn_canvas.create_line(16, 9, 36, 9, fill=THEME_GOLD, width=2)
+            self.btn_canvas.create_line(16, 9, 16, 23, fill=THEME_GOLD, width=2)
+            self.btn_canvas.create_line(w - 16, h - 9, w - 36, h - 9, fill=THEME_GOLD, width=2)
+            self.btn_canvas.create_line(w - 16, h - 9, w - 16, h - 23, fill=THEME_GOLD, width=2)
 
+        # Text with shadow
+        self.btn_canvas.create_text(
+            w // 2 + 1, h // 2 + 1,
+            text=btn_text,
+            fill="#000000",
+            font=(FONT_FAMILY, 12, "bold")
+        )
         self.btn_canvas.create_text(
             w // 2, h // 2,
             text=btn_text,
@@ -509,10 +595,10 @@ class BasaraAaaLauncher(tk.Tk):
             self.is_ready = True
             self.status_dot.config(fg=THEME_SUCCESS)
             self.status_text.config(
-                text="System Verified  —  Ready to engage in battlefield combat!",
+                text=f"System Verified  —  Core files intact ({exe} + {boot_bin} + {app0}). Ready for battle!",
                 fg=THEME_SUCCESS
             )
-            self.status_card.config(highlightbackground=THEME_BORDER)
+            self.status_card.config(highlightbackground=THEME_CARD_BORDER)
             self.btn_canvas.config(cursor="hand2")
 
         self.draw_launch_button(hover=False)
