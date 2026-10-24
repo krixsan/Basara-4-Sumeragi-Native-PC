@@ -274,8 +274,7 @@ class BasaraAaaLauncher(tk.Tk):
             text="SENGOKU BASARA 4 SUMERAGI",
             font=(FONT_FAMILY, 19, "bold"),
             fg=THEME_TEXT_WHITE,
-            bg="#07070a",
-            letter_spacing=1 if sys.platform != "win32" else 0
+            bg="#07070a"
         )
         main_title.pack(anchor="w")
 
