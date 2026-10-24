@@ -1,0 +1,4 @@
+// Basara 4 launcher: icon and manifest.
+#include <winuser.h>
+1 ICON "icons/basara4.ico"
+1 RT_MANIFEST "launcher.manifest"

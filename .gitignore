@@ -1,76 +1,76 @@
 # =============================================================================
-# Sengoku Basara 4 Sumeragi PC Port - Strict Gitignore
-# Internal source code, shaders, scripts, assets and build files are kept private.
+# Sengoku Basara 4 Sumeragi PC Port - Git Ignore
+# Open-source runtime & Vulkan renderer engine.
+# Keep internal tools, extraction pipeline, game data, and binaries private.
 # =============================================================================
 
-# Block all development & build directories
-src/
-gpu/
+# Extraction pipeline & internal workflow tools
+extracted_game/
 tools/
 scripts/
-cmake/
-out/
-build/
-extracted_game/
-user/
-backup*/
-release_package/
-.gemini/
-.vscode/
-packaging/
+relinker/
 temp_ctr/
+patches/
 tests/
-third_party/
-docs/
 launcher/
 dlss_bridge/
-patches/
+docs/
 scratch/
+release_package/
 
-# Block all source, scripts, config & build definition files
-*.c
-*.cpp
-*.h
-*.hpp
-*.py
-*.ps1
-*.sh
+# Build artifacts & outputs
+out/
+build/
 *.ninja
 *.ninja_deps
 *.ninja_log
-CMakeLists.txt
-*.rc
-*.ico
-*.manifest
+*.o
+*.obj
+*.a
+*.lib
 
-# Block binaries, archives, and system packages
+# User data, backups & IDE caches
+user/
+backup*/
+.gemini/
+.vscode/
+.idea/
+
+# Binaries, libraries, and archive packages
 *.exe
 *.dll
 *.bin
-*.zip
+*.iso
 *.pkg
+*.cpk
+*.zip
 *.7z
 *.tar*
 
-# Block dumps, logs, images, and text notes
+# Logs, test traces, dumps, and screenshots
 *.log
 *.err
 *.out
+*.dmp
 *.mon
 *.png
 *.jpg
-*.txt
 *.tmp
 *.bak
 
-# Block old / temporary configs and legacy scripts
+# Root scripts, old configs, and loose notes
 bbport.ini
 play_basara.bat
-
-# =============================================================================
-# Whitelist: Only these public release files are tracked
-# =============================================================================
+*.sh
+*.py
+*.txt
 !README.md
+
+# Exceptions
 !Play_Basara4.bat
 !basara.ini
-!.gitignore
+!CMakeLists.txt
+!launcher.py
+!build_launcher.py
+!packaging/**
+!third_party/**

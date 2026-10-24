@@ -40,8 +40,8 @@ A high-performance native PC port for **Sengoku Basara 4 Sumeragi (戦国BASARA4
 1. Download **`Basara4_Sumeragi_PC_Update1.zip`** from the [GitHub Releases](../../releases) page.
 2. Extract all contents of the zip file into your game installation directory.
 3. Place your legally dumped game data (`app0` or `extracted_game/app0`) and boot image alongside the executable.
-4. *(Optional)* Open `basara.ini` in any text editor to adjust your resolution, fullscreen mode, or framerate limit.
-5. Double-click **`Play_Basara4.bat`** to start the game!
+4. *(Optional)* Customize graphics and display preferences via the GUI Launcher or in `basara.ini`.
+5. Double-click **`Basara4_Launcher.exe`** (or **`Play_Basara4.bat`**) to start the game!
 
 ### Controls & Overlay Shortcut
 - **Settings Overlay**: Press **`Insert`** on your keyboard or press **`L3 + R3`** simultaneously on your gamepad.
