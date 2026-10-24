@@ -621,15 +621,73 @@ void runtime_restart(void) {
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef _WIN32
-    /* Keep the guest render thread ahead of background work. HIGH (not REALTIME) so a runaway
-       guest thread can still be preempted by the OS; BB_PRIORITY=0 restores normal scheduling. */
     {
-        const char *priority = getenv("BB_PRIORITY");
-        if (!(priority && priority[0] == '0')) {
-            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-            fprintf(stderr, "Runtime: process HIGH_PRIORITY_CLASS, main thread HIGHEST\n");
+        /* Hybrid P/E-core scheduling: parse flat basara.ini process_priority */
+        char prio_val[32] = "above_normal";
+        int found_key = 0;
+        FILE *f_ini = fopen("basara.ini", "r");
+        if (!f_ini) {
+            fprintf(stderr, "[PRIORITY] basara.ini not found, default process=above_normal\n");
+        } else {
+            char line[256];
+            while (fgets(line, sizeof(line), f_ini)) {
+                char *p = line;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == '#' || *p == ';' || *p == '\r' || *p == '\n' || *p == '\0') continue;
+                char *eq = strchr(p, '=');
+                if (eq) {
+                    *eq = '\0';
+                    char *k = p, *v = eq + 1;
+                    char *kend = k + strlen(k) - 1;
+                    while (kend >= k && (*kend == ' ' || *kend == '\t')) *kend-- = '\0';
+                    while (*v == ' ' || *v == '\t') v++;
+                    char *vend = v + strlen(v) - 1;
+                    while (vend >= v && (*vend == ' ' || *vend == '\t' || *vend == '\r' || *vend == '\n')) *vend-- = '\0';
+                    if (strcmp(k, "process_priority") == 0) {
+                        strncpy(prio_val, v, sizeof(prio_val) - 1);
+                        prio_val[sizeof(prio_val) - 1] = '\0';
+                        found_key = 1;
+                        break;
+                    }
+                }
+            }
+            fclose(f_ini);
+            if (!found_key) {
+                fprintf(stderr, "[PRIORITY] process_priority key not found, default above_normal\n");
+            }
         }
+
+        /* Environment override BB_PRIORITY for QA/CI */
+        const char *env_prio = getenv("BB_PRIORITY");
+        if (env_prio && *env_prio) {
+            if (env_prio[0] == '0' || strcmp(env_prio, "normal") == 0) strncpy(prio_val, "normal", sizeof(prio_val) - 1);
+            else if (strcmp(env_prio, "high") == 0) strncpy(prio_val, "high", sizeof(prio_val) - 1);
+            else if (strcmp(env_prio, "above_normal") == 0) strncpy(prio_val, "above_normal", sizeof(prio_val) - 1);
+        }
+
+        DWORD prio_class = ABOVE_NORMAL_PRIORITY_CLASS;
+        const char *prio_str = "above_normal";
+        if (strcmp(prio_val, "normal") == 0) {
+            prio_class = NORMAL_PRIORITY_CLASS;
+            prio_str = "normal";
+        } else if (strcmp(prio_val, "above_normal") == 0) {
+            prio_class = ABOVE_NORMAL_PRIORITY_CLASS;
+            prio_str = "above_normal";
+        } else if (strcmp(prio_val, "high") == 0) {
+            prio_class = HIGH_PRIORITY_CLASS;
+            prio_str = "high";
+        } else {
+            fprintf(stderr, "[PRIORITY] Warning: invalid value '%s', fallback to above_normal\n", prio_val);
+            prio_class = ABOVE_NORMAL_PRIORITY_CLASS;
+            prio_str = "above_normal";
+        }
+
+        if (!SetPriorityClass(GetCurrentProcess(), prio_class)) {
+            fprintf(stderr, "[PRIORITY] Warning: SetPriorityClass failed (%lu)\n", GetLastError());
+        } else {
+            fprintf(stderr, "[PRIORITY] process=%s\n", prio_str);
+        }
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         typedef UINT (WINAPI *timeBeginPeriod_t)(UINT);
         timeBeginPeriod_t pTimeBeginPeriod = (timeBeginPeriod_t)(void(*)(void))GetProcAddress(GetModuleHandleA("winmm.dll"), "timeBeginPeriod");
         if (!pTimeBeginPeriod) {

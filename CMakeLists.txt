@@ -219,6 +219,7 @@ if (WIN32)
     target_compile_definitions(bbgpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(bbgpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h)
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
+    # avrt.dll intentionally loaded dynamically at runtime for LTSC/Proton safety; DO NOT link -lavrt
     target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
 else()
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)

@@ -60,6 +60,10 @@ typedef struct {
     int primed;                     /* 1 once initial prefill reached; 0 on complete empty */
     pthread_t feeder;
     int feeder_running, feeder_stop;
+#ifdef _WIN32
+    HANDLE mmcss_handle;
+    DWORD mmcss_task_idx;
+#endif
     int silent, fade_pos;           /* underrun recovery: ramp to zero, then ramp new data in */
     float last_l, last_r, fade_l, fade_r;
     unsigned underruns;
@@ -146,11 +150,55 @@ static Port *port_of(int32_t handle, int32_t *error) {
 /* Dedicated feeder: keeps the SDL stream at four periods, takes PCM from the ring, and when the
  * ring runs dry keeps the device fed with silence so WASAPI never tears the stream down. A short
  * ramp stops the transitions from clicking. */
+#ifdef _WIN32
+typedef enum _AVRT_PRIORITY {
+    AVRT_PRIORITY_LOW = -1,
+    AVRT_PRIORITY_NORMAL = 0,
+    AVRT_PRIORITY_HIGH = 1,
+    AVRT_PRIORITY_CRITICAL = 2
+} AVRT_PRIORITY;
+typedef HANDLE (WINAPI *pfnAvSetMmThreadCharacteristicsW)(LPCWSTR, LPDWORD);
+typedef BOOL (WINAPI *pfnAvRevertMmThreadCharacteristics)(HANDLE);
+typedef BOOL (WINAPI *pfnAvSetMmThreadPriority)(HANDLE, AVRT_PRIORITY);
+static pfnAvSetMmThreadCharacteristicsW s_AvSetMmThreadCharacteristicsW = NULL;
+static pfnAvRevertMmThreadCharacteristics s_AvRevertMmThreadCharacteristics = NULL;
+static pfnAvSetMmThreadPriority s_AvSetMmThreadPriority = NULL;
+static int s_avrt_loaded = 0;
+
+static void init_avrt_symbols(void) {
+    if (s_avrt_loaded) return;
+    s_avrt_loaded = 1;
+    HMODULE hAvrt = LoadLibraryA("avrt.dll");
+    if (hAvrt) {
+        s_AvSetMmThreadCharacteristicsW = (pfnAvSetMmThreadCharacteristicsW)(void(*)(void))GetProcAddress(hAvrt, "AvSetMmThreadCharacteristicsW");
+        s_AvRevertMmThreadCharacteristics = (pfnAvRevertMmThreadCharacteristics)(void(*)(void))GetProcAddress(hAvrt, "AvRevertMmThreadCharacteristics");
+        s_AvSetMmThreadPriority = (pfnAvSetMmThreadPriority)(void(*)(void))GetProcAddress(hAvrt, "AvSetMmThreadPriority");
+    }
+}
+#endif
+
 static void *feeder_main(void *arg) {
     Port *p=(Port *)arg;
     SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
 #ifdef _WIN32
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    init_avrt_symbols();
+    const char *mmcss_status = "unavailable";
+    p->mmcss_handle = NULL;
+    p->mmcss_task_idx = 0;
+    if (s_AvSetMmThreadCharacteristicsW) {
+        p->mmcss_handle = s_AvSetMmThreadCharacteristicsW(L"Pro Audio", &p->mmcss_task_idx);
+        if (p->mmcss_handle) {
+            mmcss_status = "ok";
+            if (s_AvSetMmThreadPriority) s_AvSetMmThreadPriority(p->mmcss_handle, AVRT_PRIORITY_CRITICAL);
+        } else {
+            fprintf(stderr, "[PRIORITY] Warning: AvSetMmThreadCharacteristicsW failed (%lu)\n", GetLastError());
+            mmcss_status = "failed";
+        }
+    }
+    if (!p->mmcss_handle) {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+    fprintf(stderr, "[PRIORITY] thread_audio=%s mmcss=%s\n", p->mmcss_handle ? "pro_audio" : "time_critical", mmcss_status);
 #endif
     float *mix=(float *)malloc(FEEDER_MAX_FRAMES*2*sizeof(float));
     if (!mix) return NULL;
@@ -227,6 +275,12 @@ static void *feeder_main(void *arg) {
         if (produced>0 && stream) SDL_PutAudioStreamData(stream,mix,produced*2*(int)sizeof(float));
         compat_sleep_ns(4*1000000u);
     }
+#ifdef _WIN32
+    if (p->mmcss_handle && s_AvRevertMmThreadCharacteristics) {
+        s_AvRevertMmThreadCharacteristics(p->mmcss_handle);
+        p->mmcss_handle = NULL;
+    }
+#endif
     free(mix);
     return NULL;
 }
@@ -307,6 +361,12 @@ static ABI int32_t audio_close(int32_t handle) {
         p->dump=NULL;
         pthread_mutex_unlock(&p->lock);
         if (running) pthread_join(p->feeder,NULL); /* the feeder is the stream's last user */
+#ifdef _WIN32
+        if (p->mmcss_handle && s_AvRevertMmThreadCharacteristics) {
+            s_AvRevertMmThreadCharacteristics(p->mmcss_handle);
+            p->mmcss_handle = NULL;
+        }
+#endif
         if (dump) fclose(dump);
         if (stream) SDL_DestroyAudioStream(stream);
         if (s_movie_port == (int)(p - ports)) {

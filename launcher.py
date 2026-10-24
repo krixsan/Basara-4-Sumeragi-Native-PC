@@ -74,6 +74,7 @@ def read_ini():
         "rcas_strength": "75",
         "skip_intro": "0",
         "show_fps": "1",
+        "process_priority": "above_normal",
     }
     path = INI_FILE if os.path.exists(INI_FILE) else (FALLBACK_INI if os.path.exists(FALLBACK_INI) else None)
     if path:
@@ -224,6 +225,9 @@ class BasaraLauncher(tk.Tk):
         self.fullscreen_val = (ini.get("fullscreen", "1") == "1")
         self.skip_intro_val = (ini.get("skip_intro", "0") == "1")
         self.show_fps_val = (ini.get("show_fps", "1") == "1")
+        self.prio_val = ini.get("process_priority", "above_normal")
+        if self.prio_val not in ("normal", "above_normal", "high"):
+            self.prio_val = "above_normal"
 
     def sync_ini(self):
         height = self.res_val.split("x")[-1] if "x" in self.res_val else "1080"
@@ -238,6 +242,7 @@ class BasaraLauncher(tk.Tk):
             "rcas_strength": "75",
             "skip_intro": "1" if self.skip_intro_val else "0",
             "show_fps": "1" if self.show_fps_val else "0",
+            "process_priority": self.prio_val,
         }
         write_ini(cfg_payload)
 
@@ -346,6 +351,7 @@ class BasaraLauncher(tk.Tk):
         self.pills_res = self._create_pill_set(98, 26)     # Resolution (4 items)
         self.pills_fps = self._create_pill_set(65, 26)     # FPS (6 items)
         self.pills_aniso = self._create_pill_set(78, 26)   # Anisotropy (5 items)
+        self.pills_prio = self._create_pill_set(60, 24)    # Priority (3 items)
 
         # Tool button texture (146 x 26)
         self.btn_tool_norm = self._create_pill_texture(146, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
@@ -633,12 +639,43 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag_tool, "<Leave>", self._on_tool_leave)
         self.canvas.tag_bind(tag_tool, "<Button-1>", lambda e: self.open_gamepad_mapper())
 
+        # Process Priority Selector
         self.canvas.create_text(
-            196, 401,
+            196, 407,
+            text="CPU PRIORITY",
+            font=(FONT_FAMILY, 7, "bold"),
+            fill=COLOR_TEXT_MUTED,
+            anchor="w"
+        )
+        self.prio_options = [
+            ("Normal", "normal"),
+            ("Above", "above_normal"),
+            ("High", "high"),
+        ]
+        self.prio_items = []
+        for i, (label, val) in enumerate(self.prio_options):
+            x = 265 + i * 65
+            y = 395
+            act, inact, hov = self.pills_prio
+            img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
+            txt_id = self.canvas.create_text(x + 30, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
+
+            tag = f"btn_prio_{i}"
+            self.canvas.itemconfig(img_id, tags=(tag,))
+            self.canvas.itemconfig(txt_id, tags=(tag,))
+
+            self.canvas.tag_bind(tag, "<Enter>", lambda e, idx=i: self._on_prio_enter(idx))
+            self.canvas.tag_bind(tag, "<Leave>", lambda e, idx=i: self._on_prio_leave(idx))
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e, v=val: self._select_prio(v))
+
+            self.prio_items.append((img_id, txt_id, val))
+
+        self.canvas.create_text(
+            475, 407,
             text="📸 F12: Screenshot  •  Menu: Insert / L3+R3",
             font=(FONT_FAMILY, 8),
             fill=COLOR_TEXT_MUTED,
-            anchor="nw"
+            anchor="w"
         )
 
         # =====================================================================
@@ -715,6 +752,15 @@ class BasaraLauncher(tk.Tk):
         self.canvas.itemconfig(self.sw3_img, image=self.switch_on if self.skip_intro_val else self.switch_off)
         self.canvas.itemconfig(self.sw4_img, image=self.switch_on if self.show_fps_val else self.switch_off)
 
+        act_prio, inact_prio, _ = self.pills_prio
+        for img_id, txt_id, val in self.prio_items:
+            if val == self.prio_val:
+                self.canvas.itemconfig(img_id, image=act_prio)
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+            else:
+                self.canvas.itemconfig(img_id, image=inact_prio)
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
     def _on_res_enter(self, idx):
         self.canvas.config(cursor="hand2")
         img_id, txt_id, val = self.res_items[idx]
@@ -775,6 +821,27 @@ class BasaraLauncher(tk.Tk):
 
     def _select_aniso(self, val):
         self.aniso_val = val
+        self.refresh_controls()
+        self.sync_ini()
+
+    def _on_prio_enter(self, idx):
+        self.canvas.config(cursor="hand2")
+        img_id, txt_id, val = self.prio_items[idx]
+        if val != self.prio_val:
+            _, _, hov = self.pills_prio
+            self.canvas.itemconfig(img_id, image=hov)
+            self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+
+    def _on_prio_leave(self, idx):
+        self.canvas.config(cursor="arrow")
+        img_id, txt_id, val = self.prio_items[idx]
+        if val != self.prio_val:
+            _, inact, _ = self.pills_prio
+            self.canvas.itemconfig(img_id, image=inact)
+            self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
+    def _select_prio(self, val):
+        self.prio_val = val
         self.refresh_controls()
         self.sync_ini()
 
@@ -923,6 +990,9 @@ class BasaraLauncher(tk.Tk):
             env["BB_FPS_LIMIT"] = str(self.fps_val)
         else:
             env["BB_FPS_LIMIT"] = "60"
+
+        if hasattr(self, "prio_val") and self.prio_val:
+            env["BB_PRIORITY"] = self.prio_val
 
         # Gamepad mapping support
         for map_path in [os.path.join("user", "gamepad_mapping.txt"), "gamepad_mapping.txt"]:

@@ -100,6 +100,10 @@ void VideoOutDriver::RunPresenter(std::function<void()> work, bool if_idle) {
 
 void VideoOutDriver::SwapThread(std::stop_token token) {
     Common::SetCurrentThreadName("bb:Present");
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    std::fprintf(stderr, "[PRIORITY] thread_present(swap)=above_normal\n");
+#endif
     while (true) {
         std::function<void()> work;
         {
@@ -838,6 +842,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     Common::SetCurrentThreadName("shadPS4:PresentThread");
     Common::SetCurrentThreadRealtime(vblank_period);
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    std::fprintf(stderr, "[PRIORITY] thread_present(vblank)=above_normal\n");
+#endif
 
     Common::AccurateTimer timer{vblank_period};
 
