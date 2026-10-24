@@ -14,6 +14,8 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include <dbghelp.h>
+#include "log.h"
 #else
 #include <sys/mman.h>
 #include <malloc.h>
@@ -186,13 +188,102 @@ static void isa_context_regs(CONTEXT *c, IsaRegs *regs, int to_context) {
     if (to_context) c->EFlags=(DWORD)regs->rflags; else regs->rflags=c->EFlags;
 }
 const char *runtime_thread_current_name(void);
+
+struct DumpWorkerParam {
+    DWORD fault_thread_id;
+    EXCEPTION_POINTERS *info;
+    const char *minidump_path;
+    BOOL result;
+};
+
+static DWORD WINAPI dump_worker(LPVOID lpParam) {
+    struct DumpWorkerParam *p = (struct DumpWorkerParam *)lpParam;
+    HANDLE hFile = CreateFileA(p->minidump_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        MINIDUMP_EXCEPTION_INFORMATION mei;
+        mei.ThreadId = p->fault_thread_id;
+        mei.ExceptionPointers = p->info;
+        mei.ClientPointers = FALSE;
+        p->result = MiniDumpWriteDump(
+            GetCurrentProcess(),
+            GetCurrentProcessId(),
+            hFile,
+            (MINIDUMP_TYPE)(MiniDumpNormal | MiniDumpWithThreadInfo | MiniDumpWithModuleHeaders),
+            &mei,
+            NULL,
+            NULL
+        );
+        CloseHandle(hFile);
+    } else {
+        p->result = FALSE;
+    }
+    return 0;
+}
+
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     const CONTEXT *c=info->ContextRecord;
+
+    /* 1. RAW Win32 Crash Log: ZERO locks, ZERO CRT heap calls, ZERO log framework dependency */
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    CreateDirectoryA("user", NULL);
+    CreateDirectoryA("user/crashes", NULL);
+
+    char raw_path[MAX_PATH];
+    snprintf(raw_path, sizeof(raw_path), "user/crashes/crash_raw_%04u%02u%02u_%02u%02u%02u.log",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    HANDLE hRaw = CreateFileA(raw_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hRaw != INVALID_HANDLE_VALUE) {
+        char buf[2048];
+        const char *guest_name = runtime_thread_current_name();
+        const char *access_type = "n/a";
+        void *access_addr = NULL;
+        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
+            access_type = record->ExceptionInformation[0] == 1 ? "write" : record->ExceptionInformation[0] == 8 ? "execute" : "read";
+            access_addr = (void *)record->ExceptionInformation[1];
+        }
+
+        int len = snprintf(buf, sizeof(buf),
+            "==================== CRASH RAW REPORT ====================\r\n"
+            "Timestamp:      %04u-%02u-%02u %02u:%02u:%02u.%03u\r\n"
+            "ExceptionCode:  0x%08lx\r\n"
+            "ThreadId:       %lu (guest: %s)\r\n"
+            "Fault RIP:      0x%016llx\r\n"
+            "Guest Offset:   0x%llx\r\n"
+            "Access Type:    %s\r\n"
+            "Fault Address:  %p\r\n"
+            "Registers:\r\n"
+            "  RAX: 0x%016llx  RBX: 0x%016llx  RCX: 0x%016llx  RDX: 0x%016llx\r\n"
+            "  RSI: 0x%016llx  RDI: 0x%016llx  RBP: 0x%016llx  RSP: 0x%016llx\r\n"
+            "  R8 : 0x%016llx  R9 : 0x%016llx  R10: 0x%016llx  R11: 0x%016llx\r\n"
+            "  R12: 0x%016llx  R13: 0x%016llx  R14: 0x%016llx  R15: 0x%016llx\r\n"
+            "==========================================================\r\n",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+            record->ExceptionCode,
+            GetCurrentThreadId(), guest_name ? guest_name : "unknown",
+            (unsigned long long)c->Rip,
+            (unsigned long long)((uintptr_t)c->Rip - (uintptr_t)image),
+            access_type, access_addr,
+            c->Rax, c->Rbx, c->Rcx, c->Rdx,
+            c->Rsi, c->Rdi, c->Rbp, c->Rsp,
+            c->R8, c->R9, c->R10, c->R11,
+            c->R12, c->R13, c->R14, c->R15
+        );
+        if (len > 0) {
+            DWORD written = 0;
+            WriteFile(hRaw, buf, (DWORD)len, &written, NULL);
+            FlushFileBuffers(hRaw);
+        }
+        CloseHandle(hRaw);
+    }
+
     char where[MAX_PATH+64];
     describe_address(where,sizeof(where),(uintptr_t)c->Rip);
+
     if (record->ExceptionCode==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2)
         fprintf(stderr,"Fault: %s access to %p at %s (thread %lu, exception 0x%08lx)\n",
                 record->ExceptionInformation[0]==1 ? "write" : record->ExceptionInformation[0]==8 ? "execute" : "read",
@@ -202,9 +293,9 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
-    /* SacredFire: the thread's name and its native call chain from the unwind tables (drivers and
-     * system DLLs keep no frame pointers; this names the call into them). Guest frames have no
-     * unwind data: the walk stops there and the rbp chain below continues. */
+
+    /* SacredFire: the thread's name and its native call chain from the unwind tables */
+    const char *guest_name=runtime_thread_current_name();
     {
         typedef HRESULT (WINAPI *GetDescription)(HANDLE,PWSTR *);
         GetDescription get_description=(GetDescription)(void (*)(void))GetProcAddress(GetModuleHandleA("kernel32.dll"),"GetThreadDescription");
@@ -212,65 +303,128 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         if (get_description && SUCCEEDED(get_description(GetCurrentThread(),&description)) && description && *description)
             fprintf(stderr,"  thread name: %ls\n",description);
         if (description) LocalFree(description);
-        const char *guest_name=runtime_thread_current_name();
         if (guest_name) fprintf(stderr,"  guest thread: %s\n",guest_name);
         fprintf(stderr,"  RIP: 0x%016llx (guest offset 0x%" PRIxPTR ")\n",
                 (unsigned long long)c->Rip,(uintptr_t)c->Rip-(uintptr_t)image);
-        {
-            char last[2048];
-            runtime_file_last_opened(last,sizeof(last));
-            if (last[0]) fprintf(stderr,"  last guest files opened: %s\n",last);
-            FILE *crash_log = fopen("crash_character.log", "a");
-            if (crash_log) {
-                fprintf(crash_log, "\n==================== CRASH REPORT ====================\n");
-                fprintf(crash_log, "ExceptionCode: 0x%08lx\n", record->ExceptionCode);
-                fprintf(crash_log, "Fault RIP: 0x%016llx (guest offset: 0x%llx)\n",
-                        (unsigned long long)c->Rip,
-                        (unsigned long long)((uintptr_t)c->Rip - (uintptr_t)image));
-                fprintf(crash_log, "Thread: %lu (guest: %s)\n",
-                        GetCurrentThreadId(), guest_name ? guest_name : "unknown");
-                fprintf(crash_log, "Last opened files: %s\n", last[0] ? last : "none");
-                fprintf(crash_log, "Registers:\n");
-                fprintf(crash_log, "  RAX: 0x%016llx  RBX: 0x%016llx  RCX: 0x%016llx  RDX: 0x%016llx\n", c->Rax, c->Rbx, c->Rcx, c->Rdx);
-                fprintf(crash_log, "  RSI: 0x%016llx  RDI: 0x%016llx  RBP: 0x%016llx  RSP: 0x%016llx\n", c->Rsi, c->Rdi, c->Rbp, c->Rsp);
-                fprintf(crash_log, "  R8 : 0x%016llx  R9 : 0x%016llx  R10: 0x%016llx  R11: 0x%016llx\n", c->R8, c->R9, c->R10, c->R11);
-                fprintf(crash_log, "  R12: 0x%016llx  R13: 0x%016llx  R14: 0x%016llx  R15: 0x%016llx\n", c->R12, c->R13, c->R14, c->R15);
-                fprintf(crash_log, "======================================================\n");
-                fclose(crash_log);
+    }
+
+    char last[2048] = {0};
+    runtime_file_last_opened(last,sizeof(last));
+    if (last[0]) fprintf(stderr,"  last guest files opened: %s\n",last);
+
+    /* Crash dump generation & rate limiting (max 3 dumps / hour) */
+    static ULONGLONG s_dump_times[3] = {0};
+    static int s_dump_idx = 0;
+    ULONGLONG now = GetTickCount64();
+    int rate_limited = 0;
+    if (s_dump_times[s_dump_idx] != 0 && (now - s_dump_times[s_dump_idx]) < 3600000ULL) {
+        rate_limited = 1;
+    }
+
+    char dmp_path[MAX_PATH];
+    char txt_path[MAX_PATH];
+    snprintf(dmp_path, sizeof(dmp_path), "user/crashes/crash_%04u%02u%02u_%02u%02u%02u.dmp",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    snprintf(txt_path, sizeof(txt_path), "user/crashes/crash_%04u%02u%02u_%02u%02u%02u.txt",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    BOOL dump_succeeded = FALSE;
+    if (!rate_limited) {
+        s_dump_times[s_dump_idx] = now;
+        s_dump_idx = (s_dump_idx + 1) % 3;
+
+        struct DumpWorkerParam dparam = { GetCurrentThreadId(), info, dmp_path, FALSE };
+        HANDLE hDumpThread = CreateThread(NULL, 0, dump_worker, &dparam, 0, NULL);
+        if (hDumpThread) {
+            DWORD dwWait = WaitForSingleObject(hDumpThread, 5000);
+            if (dwWait == WAIT_OBJECT_0) {
+                dump_succeeded = dparam.result;
+            } else {
+                fprintf(stderr, "[CRASH HANDLER] MiniDumpWriteDump worker timed out after 5s\n");
             }
+            CloseHandle(hDumpThread);
         }
-        static const char *const reg_names[]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","r8","r9","r10","r11","r12","r13","r14","r15"};
-        const DWORD64 regs[]={c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->R8,c->R9,c->R10,c->R11,c->R12,c->R13,c->R14,c->R15};
-        for (int r=0;r<15;++r) {
-            describe_address(where,sizeof(where),(uintptr_t)regs[r]);
-            if (strchr(where,'+')) fprintf(stderr,"  %s -> %s\n",reg_names[r],where);
+    } else {
+        fprintf(stderr, "[CRASH HANDLER] Rate limit active (>3 dumps/hr), creating fallback trace only\n");
+    }
+
+    /* Fallback trace file if minidump failed or rate-limited via raw Win32 */
+    if (!dump_succeeded) {
+        HANDLE hTxt = CreateFileA(txt_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hTxt != INVALID_HANDLE_VALUE) {
+            char tbuf[2048];
+            int tlen = snprintf(tbuf, sizeof(tbuf),
+                "==================== CRASH FALLBACK TRACE ====================\r\n"
+                "ExceptionCode: 0x%08lx\r\n"
+                "Fault RIP: 0x%016llx (guest offset: 0x%llx)\r\n"
+                "Thread: %lu (guest: %s)\r\n"
+                "Last opened guest files: %s\r\n"
+                "Registers:\r\n"
+                "  RAX: 0x%016llx  RBX: 0x%016llx  RCX: 0x%016llx  RDX: 0x%016llx\r\n"
+                "  RSI: 0x%016llx  RDI: 0x%016llx  RBP: 0x%016llx  RSP: 0x%016llx\r\n"
+                "  R8 : 0x%016llx  R9 : 0x%016llx  R10: 0x%016llx  R11: 0x%016llx\r\n"
+                "  R12: 0x%016llx  R13: 0x%016llx  R14: 0x%016llx  R15: 0x%016llx\r\n"
+                "Location: %s\r\n"
+                "==============================================================\r\n",
+                record->ExceptionCode,
+                (unsigned long long)c->Rip,
+                (unsigned long long)((uintptr_t)c->Rip - (uintptr_t)image),
+                GetCurrentThreadId(), guest_name ? guest_name : "unknown",
+                last[0] ? last : "none",
+                c->Rax, c->Rbx, c->Rcx, c->Rdx,
+                c->Rsi, c->Rdi, c->Rbp, c->Rsp,
+                c->R8, c->R9, c->R10, c->R11,
+                c->R12, c->R13, c->R14, c->R15,
+                where
+            );
+            if (tlen > 0) {
+                DWORD twritten = 0;
+                WriteFile(hTxt, tbuf, (DWORD)tlen, &twritten, NULL);
+                FlushFileBuffers(hTxt);
+            }
+            CloseHandle(hTxt);
         }
-        CONTEXT walk=*c;
-        if (!walk.Rip) {
-            /* A call through a null pointer: the caller's return address is on top of the stack. */
+    }
+
+    /* Dump ring buffer into last_run.log (uses TryEnterCriticalSection, non-blocking) */
+    log_dump_ring_buffer("user/crashes/last_run.log");
+
+    /* Mark flag for launcher consent prompt via Win32 */
+    HANDLE hFlag = CreateFileA("user/crashes/.need_consent", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFlag != INVALID_HANDLE_VALUE) {
+        DWORD fwritten = 0;
+        WriteFile(hFlag, "1\r\n", 3, &fwritten, NULL);
+        CloseHandle(hFlag);
+    }
+
+    static const char *const reg_names[]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","r8","r9","r10","r11","r12","r13","r14","r15"};
+    const DWORD64 regs[]={c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->R8,c->R9,c->R10,c->R11,c->R12,c->R13,c->R14,c->R15};
+    for (int r=0;r<15;++r) {
+        describe_address(where,sizeof(where),(uintptr_t)regs[r]);
+        if (strchr(where,'+')) fprintf(stderr,"  %s -> %s\n",reg_names[r],where);
+    }
+    CONTEXT walk=*c;
+    if (!walk.Rip) {
+        DWORD64 ret=0; SIZE_T got=0;
+        if (ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) && got==sizeof(ret)) {
+            walk.Rip=ret; walk.Rsp+=8;
+            fprintf(stderr,"  (called through a null pointer)\n");
+        }
+    }
+    for (int depth=0; depth<32 && walk.Rip; ++depth) {
+        describe_address(where,sizeof(where),(uintptr_t)walk.Rip);
+        fprintf(stderr,"  native #%d %s\n",depth,where);
+        DWORD64 module_base=0;
+        PRUNTIME_FUNCTION function=RtlLookupFunctionEntry(walk.Rip,&module_base,NULL);
+        if (!function) {
+            if (depth) break;
             DWORD64 ret=0; SIZE_T got=0;
-            if (ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) && got==sizeof(ret)) {
-                walk.Rip=ret; walk.Rsp+=8;
-                fprintf(stderr,"  (called through a null pointer)\n");
-            }
+            if (!ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) || got!=sizeof(ret)) break;
+            walk.Rip=ret; walk.Rsp+=8;
+            continue;
         }
-        for (int depth=0; depth<32 && walk.Rip; ++depth) {
-            describe_address(where,sizeof(where),(uintptr_t)walk.Rip);
-            fprintf(stderr,"  native #%d %s\n",depth,where);
-            DWORD64 module_base=0;
-            PRUNTIME_FUNCTION function=RtlLookupFunctionEntry(walk.Rip,&module_base,NULL);
-            if (!function) {
-                /* A leaf function, or code without unwind data (guest): only the first frame
-                 * can be stepped over, by its return address on the stack. */
-                if (depth) break;
-                DWORD64 ret=0; SIZE_T got=0;
-                if (!ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) || got!=sizeof(ret)) break;
-                walk.Rip=ret; walk.Rsp+=8;
-                continue;
-            }
-            PVOID handler_data=NULL; DWORD64 establisher=0;
-            RtlVirtualUnwind(UNW_FLAG_NHANDLER,module_base,walk.Rip,function,&walk,&handler_data,&establisher,NULL);
-        }
+        PVOID handler_data=NULL; DWORD64 establisher=0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER,module_base,walk.Rip,function,&walk,&handler_data,&establisher,NULL);
     }
     /* rbp chain (guest and host code keep frame pointers). */
     uintptr_t rbp=(uintptr_t)c->Rbp;
@@ -334,19 +488,32 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
             return EXCEPTION_CONTINUE_EXECUTION;
         }
     }
-    if (code==EXCEPTION_ACCESS_VIOLATION || code==EXCEPTION_ILLEGAL_INSTRUCTION || code==EXCEPTION_PRIV_INSTRUCTION ||
-        code==EXCEPTION_STACK_OVERFLOW || code==EXCEPTION_INT_DIVIDE_BY_ZERO || code==EXCEPTION_DATATYPE_MISALIGNMENT) {
-        /* Faults in guest code, the loader or the runtime end the process with a report; drivers
-         * and system libraries may handle their own exceptions. */
-        uintptr_t rip=(uintptr_t)info->ContextRecord->Rip;
-        HMODULE self=GetModuleHandleA(NULL), module=NULL;
-        int ours=(image && rip-(uintptr_t)image<0x20000000) ||
-                 (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)rip,&module) && module==self) ||
-                 !module;
+    /* Benign exceptions: allow game SEH (__try / __except) to handle first.
+     * If unhandled by game SEH, unhandled_fault will catch it at the top level. */
+    if (code == EXCEPTION_ACCESS_VIOLATION ||
+        code == EXCEPTION_IN_PAGE_ERROR ||
+        code == EXCEPTION_BREAKPOINT ||
+        code == EXCEPTION_SINGLE_STEP ||
+        code == EXCEPTION_GUARD_PAGE ||
+        code == EXCEPTION_DATATYPE_MISALIGNMENT) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    /* Truly fatal exceptions: immediate crash report */
+    if (code == EXCEPTION_STACK_OVERFLOW ||
+        code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_PRIV_INSTRUCTION ||
+        code == EXCEPTION_NONCONTINUABLE_EXCEPTION ||
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+        (code == 0xC0000008 /* STATUS_INVALID_HANDLE */ && getenv("BB_STRICT_HANDLES"))) {
+        uintptr_t rip = (uintptr_t)info->ContextRecord->Rip;
+        HMODULE self = GetModuleHandleA(NULL), module = NULL;
+        int ours = (image && rip - (uintptr_t)image < 0x20000000) ||
+                   (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)rip, &module) && module == self) ||
+                   !module;
         if (ours) return fatal_exception(info);
     }
-    /* BB_STRICT_HANDLES=1: a closed or invalid handle used anywhere is reported (diagnostics). */
-    if (code==0xC0000008 /* STATUS_INVALID_HANDLE */) return fatal_exception(info);
+
     return EXCEPTION_CONTINUE_SEARCH;
 }
 static LONG WINAPI unhandled_fault(EXCEPTION_POINTERS *info) { return fatal_exception(info); }
@@ -621,6 +788,8 @@ void runtime_restart(void) {
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef _WIN32
+    log_init();
+    LOG_INFO("probe", "Sengoku Basara 4 Sumeragi PC Engine starting");
     {
         /* Hybrid P/E-core scheduling: parse flat basara.ini process_priority */
         char prio_val[32] = "above_normal";
@@ -684,8 +853,10 @@ int main(int argc, char **argv) {
 
         if (!SetPriorityClass(GetCurrentProcess(), prio_class)) {
             fprintf(stderr, "[PRIORITY] Warning: SetPriorityClass failed (%lu)\n", GetLastError());
+            LOG_WARN("priority", "SetPriorityClass failed (%lu)", GetLastError());
         } else {
             fprintf(stderr, "[PRIORITY] process=%s\n", prio_str);
+            LOG_INFO("priority", "process=%s", prio_str);
         }
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         typedef UINT (WINAPI *timeBeginPeriod_t)(UINT);
@@ -1065,6 +1236,7 @@ int main(int argc, char **argv) {
         }
     }
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
+    LOG_INFO("probe", "Entering original x86-64 code at guest offset 0x%" PRIx64, entry);
     entered_game=1;
     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};
 #ifdef _WIN32

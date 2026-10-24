@@ -236,6 +236,7 @@ if (WIN32)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
     add_executable(sacredfire ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
         ../src/isa_rewrite.c ../src/isa_emulate.c
+        ../src/log.cpp ../src/crash_reporter.cpp
         ../packaging/windows/basara.rc)
     set_target_properties(sacredfire PROPERTIES OUTPUT_NAME basara_pc C_STANDARD 11 C_EXTENSIONS OFF WIN32_EXECUTABLE FALSE)
     # isa_emulate runs inside guest code: no XMM/YMM.
@@ -244,7 +245,7 @@ if (WIN32)
     target_compile_options(sacredfire PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror
         -Wno-unknown-warning-option -Wno-unused-but-set-global>)
     target_include_directories(sacredfire PRIVATE .. ../src)
-    target_link_libraries(sacredfire PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 -pthread)
+    target_link_libraries(sacredfire PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 dbghelp dxgi winhttp -pthread)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
     target_link_options(sacredfire PRIVATE -Wl,--subsystem,console -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")

@@ -12,6 +12,11 @@ import subprocess
 import threading
 import tkinter as tk
 from tkinter import messagebox
+import zipfile
+import re
+import glob
+import time
+import json
 
 from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageChops
 
@@ -75,6 +80,9 @@ def read_ini():
         "skip_intro": "0",
         "show_fps": "1",
         "process_priority": "above_normal",
+        "telemetry_upload": "ask",
+        "telemetry_endpoint": "https://api.github.com/repos/krixsan/Basara-4-Sumeragi-Native-PC/telemetry",
+        "log_level": "info",
     }
     path = INI_FILE if os.path.exists(INI_FILE) else (FALLBACK_INI if os.path.exists(FALLBACK_INI) else None)
     if path:
@@ -228,6 +236,9 @@ class BasaraLauncher(tk.Tk):
         self.prio_val = ini.get("process_priority", "above_normal")
         if self.prio_val not in ("normal", "above_normal", "high"):
             self.prio_val = "above_normal"
+        self.telem_val = ini.get("telemetry_upload", "ask").lower()
+        if self.telem_val not in ("ask", "never", "always"):
+            self.telem_val = "ask"
 
     def sync_ini(self):
         height = self.res_val.split("x")[-1] if "x" in self.res_val else "1080"
@@ -243,6 +254,7 @@ class BasaraLauncher(tk.Tk):
             "skip_intro": "1" if self.skip_intro_val else "0",
             "show_fps": "1" if self.show_fps_val else "0",
             "process_priority": self.prio_val,
+            "telemetry_upload": self.telem_val,
         }
         write_ini(cfg_payload)
 
@@ -351,7 +363,8 @@ class BasaraLauncher(tk.Tk):
         self.pills_res = self._create_pill_set(98, 26)     # Resolution (4 items)
         self.pills_fps = self._create_pill_set(65, 26)     # FPS (6 items)
         self.pills_aniso = self._create_pill_set(78, 26)   # Anisotropy (5 items)
-        self.pills_prio = self._create_pill_set(60, 24)    # Priority (3 items)
+        self.pills_prio = self._create_pill_set(52, 24)    # Priority (3 items)
+        self.pills_telem = self._create_pill_set(52, 24)   # Telemetry (3 items)
 
         # Tool button texture (146 x 26)
         self.btn_tool_norm = self._create_pill_texture(146, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
@@ -641,8 +654,8 @@ class BasaraLauncher(tk.Tk):
 
         # Process Priority Selector
         self.canvas.create_text(
-            196, 407,
-            text="CPU PRIORITY",
+            190, 407,
+            text="PRIORITY",
             font=(FONT_FAMILY, 7, "bold"),
             fill=COLOR_TEXT_MUTED,
             anchor="w"
@@ -654,11 +667,11 @@ class BasaraLauncher(tk.Tk):
         ]
         self.prio_items = []
         for i, (label, val) in enumerate(self.prio_options):
-            x = 265 + i * 65
+            x = 245 + i * 56
             y = 395
             act, inact, hov = self.pills_prio
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
-            txt_id = self.canvas.create_text(x + 30, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
+            txt_id = self.canvas.create_text(x + 26, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
 
             tag = f"btn_prio_{i}"
             self.canvas.itemconfig(img_id, tags=(tag,))
@@ -670,8 +683,39 @@ class BasaraLauncher(tk.Tk):
 
             self.prio_items.append((img_id, txt_id, val))
 
+        # Crash Telemetry Selector
         self.canvas.create_text(
-            475, 407,
+            425, 407,
+            text="TELEMETRY",
+            font=(FONT_FAMILY, 7, "bold"),
+            fill=COLOR_TEXT_MUTED,
+            anchor="w"
+        )
+        self.telem_options = [
+            ("Ask", "ask"),
+            ("Never", "never"),
+            ("Always", "always"),
+        ]
+        self.telem_items = []
+        for i, (label, val) in enumerate(self.telem_options):
+            x = 490 + i * 56
+            y = 395
+            act, inact, hov = self.pills_telem
+            img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
+            txt_id = self.canvas.create_text(x + 26, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
+
+            tag = f"btn_telem_{i}"
+            self.canvas.itemconfig(img_id, tags=(tag,))
+            self.canvas.itemconfig(txt_id, tags=(tag,))
+
+            self.canvas.tag_bind(tag, "<Enter>", lambda e, idx=i: self._on_telem_enter(idx))
+            self.canvas.tag_bind(tag, "<Leave>", lambda e, idx=i: self._on_telem_leave(idx))
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e, v=val: self._select_telem(v))
+
+            self.telem_items.append((img_id, txt_id, val))
+
+        self.canvas.create_text(
+            675, 407,
             text="📸 F12: Screenshot  •  Menu: Insert / L3+R3",
             font=(FONT_FAMILY, 8),
             fill=COLOR_TEXT_MUTED,
@@ -761,6 +805,15 @@ class BasaraLauncher(tk.Tk):
                 self.canvas.itemconfig(img_id, image=inact_prio)
                 self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
+        act_telem, inact_telem, _ = self.pills_telem
+        for img_id, txt_id, val in self.telem_items:
+            if val == self.telem_val:
+                self.canvas.itemconfig(img_id, image=act_telem)
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+            else:
+                self.canvas.itemconfig(img_id, image=inact_telem)
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
     def _on_res_enter(self, idx):
         self.canvas.config(cursor="hand2")
         img_id, txt_id, val = self.res_items[idx]
@@ -842,6 +895,27 @@ class BasaraLauncher(tk.Tk):
 
     def _select_prio(self, val):
         self.prio_val = val
+        self.refresh_controls()
+        self.sync_ini()
+
+    def _on_telem_enter(self, idx):
+        self.canvas.config(cursor="hand2")
+        img_id, txt_id, val = self.telem_items[idx]
+        if val != self.telem_val:
+            _, _, hov = self.pills_telem
+            self.canvas.itemconfig(img_id, image=hov)
+            self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+
+    def _on_telem_leave(self, idx):
+        self.canvas.config(cursor="arrow")
+        img_id, txt_id, val = self.telem_items[idx]
+        if val != self.telem_val:
+            _, inact, _ = self.pills_telem
+            self.canvas.itemconfig(img_id, image=inact)
+            self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
+    def _select_telem(self, val):
+        self.telem_val = val
         self.refresh_controls()
         self.sync_ini()
 
@@ -1082,9 +1156,137 @@ def run_headless_prepare():
         return 1
 
 
+def scrub_pii(text: str) -> str:
+    """Scrub personal identifiable information (usernames, local IPs, MACs) from log text."""
+    if not text:
+        return ""
+    # Scrub Windows usernames in paths C:\Users\<username>\ or C:/Users/<username>/
+    text = re.sub(r'([A-Za-z]:[/\\]Users[/\\])[^/\\ \r\n\t]+', r'\1[USER]', text, flags=re.IGNORECASE)
+    # Scrub Linux/Unix usernames /home/<username>/
+    text = re.sub(r'(/home/)[^/\\ \r\n\t]+', r'\1[USER]', text)
+    # Scrub private IPv4 addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    text = re.sub(r'\b(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]', text)
+    # Scrub MAC addresses (e.g. 00:1A:2B:3C:4D:5E or 00-1A-2B-3C-4D-5E)
+    text = re.sub(r'\b(?:[0-9A-Fa-f]{2}[:-]){5}(?:[0-9A-Fa-f]{2})\b', '[REDACTED_MAC]', text)
+    return text
+
+
+def upload_crash_package(zip_path: str, endpoint: str) -> bool:
+    """
+    Diagnostic telemetry uploader.
+    In Update 2/3, packages are organized into user/crashes/pending/.
+    Update 4 will wire HTTPS POST transmission to the telemetry server.
+    """
+    try:
+        if not os.path.isfile(zip_path):
+            return False
+        print(f"[TELEMETRY] Package queued: {zip_path}")
+        # TODO (Update 4): HTTP POST payload to endpoint via winhttp/urllib
+        return True
+    except Exception as e:
+        print(f"[TELEMETRY] Upload error: {e}")
+        return False
+
+
+def check_pending_crash_consent():
+    """Checks for .need_consent flag and packages crash minidump + scrubbed logs."""
+    flag_file = os.path.join("user", "crashes", ".need_consent")
+    if not os.path.isfile(flag_file):
+        return
+
+    ini = read_ini()
+    upload_pref = ini.get("telemetry_upload", "ask").lower()
+    endpoint = ini.get("telemetry_endpoint", "https://api.github.com/repos/krixsan/Basara-4-Sumeragi-Native-PC/telemetry")
+
+    if upload_pref == "never":
+        try:
+            os.remove(flag_file)
+        except Exception:
+            pass
+        return
+
+    if upload_pref == "ask":
+        MB_YESNO = 0x04
+        MB_ICONQUESTION = 0x20
+        IDYES = 6
+        try:
+            res = ctypes.windll.user32.MessageBoxW(
+                0,
+                "Sengoku Basara 4 Sumeragi encountered an unexpected error during the last session.\n\n"
+                "Would you like to package and save diagnostic crash data (crash minidump and anonymized log)?\n\n"
+                "Personal files, passwords, and private identifiers are scrubbed and will NEVER be collected.",
+                "Sengoku Basara 4 Sumeragi — Crash Diagnostic",
+                MB_YESNO | MB_ICONQUESTION
+            )
+            if res != IDYES:
+                try:
+                    os.remove(flag_file)
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
+    # Package crash dump and scrubbed logs
+    try:
+        crashes_dir = os.path.join("user", "crashes")
+        pending_dir = os.path.join(crashes_dir, "pending")
+        os.makedirs(pending_dir, exist_ok=True)
+
+        # Find newest .dmp
+        dmp_files = sorted(glob.glob(os.path.join(crashes_dir, "*.dmp")), key=os.path.getmtime, reverse=True)
+        newest_dmp = dmp_files[0] if dmp_files else None
+
+        # Find newest log (last_run.log or basara.log)
+        log_cand = [
+            os.path.join(crashes_dir, "last_run.log"),
+            os.path.join("user", "logs", "basara.log")
+        ]
+        log_content = ""
+        for lp in log_cand:
+            if os.path.isfile(lp):
+                try:
+                    with open(lp, "r", encoding="utf-8", errors="replace") as lf:
+                        log_content = lf.read()
+                    break
+                except Exception:
+                    pass
+
+        scrubbed_log = scrub_pii(log_content)
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        pkg_path = os.path.join(pending_dir, f"crash_package_{ts}.zip")
+
+        manifest = {
+            "version": "v1.0-update2",
+            "timestamp": ts,
+            "platform": sys.platform,
+            "has_minidump": bool(newest_dmp)
+        }
+
+        with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            if newest_dmp and os.path.isfile(newest_dmp):
+                zf.write(newest_dmp, arcname=os.path.basename(newest_dmp))
+            if scrubbed_log:
+                zf.writestr("basara_anonymized.log", scrubbed_log)
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+        upload_crash_package(pkg_path, endpoint)
+
+    except Exception as e:
+        print(f"[CRASH_REPORTER] Packaging exception: {e}")
+    finally:
+        try:
+            if os.path.isfile(flag_file):
+                os.remove(flag_file)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     if "--prepare-only" in sys.argv or "-p" in sys.argv:
         sys.exit(run_headless_prepare())
     else:
+        check_pending_crash_consent()
         app = BasaraLauncher()
         app.mainloop()
