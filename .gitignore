@@ -57,6 +57,8 @@ backup*/
 *.jpg
 *.tmp
 *.bak
+__pycache__/
+*.pyc
 
 # Root scripts, old configs, and loose notes
 bbport.ini
