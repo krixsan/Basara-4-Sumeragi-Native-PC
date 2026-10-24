@@ -1,26 +1,29 @@
 # =============================================================================
 # Sengoku Basara 4 Sumeragi PC Port - Git Ignore
-# Open-source runtime & Vulkan renderer engine.
-# Keep internal tools, extraction pipeline, game data, and binaries private.
+# Open-Source Native Runtime & Vulkan Renderer Engine
+# Developed, Ported & Maintained by krixsan
 # =============================================================================
 
-# Extraction pipeline & internal workflow tools
+# Extraction pipeline & internal workflow tools (Keep 100% Private!)
 extracted_game/
+out/
+build/
+user/
+backup*/
+release_package/
 tools/
 scripts/
 relinker/
 temp_ctr/
 patches/
-tests/
 launcher/
 dlss_bridge/
-docs/
 scratch/
-release_package/
+.gemini/
+.vscode/
+.idea/
 
-# Build artifacts & outputs
-out/
-build/
+# Intermediate compilation files
 *.ninja
 *.ninja_deps
 *.ninja_log
@@ -29,14 +32,7 @@ build/
 *.a
 *.lib
 
-# User data, backups & IDE caches
-user/
-backup*/
-.gemini/
-.vscode/
-.idea/
-
-# Binaries, libraries, and archive packages
+# Binaries, libraries, and archive packages (Never commit binaries!)
 *.exe
 *.dll
 *.bin
@@ -47,7 +43,7 @@ backup*/
 *.7z
 *.tar*
 
-# Logs, test traces, dumps, and screenshots
+# Logs, dumps, traces, and screenshots
 *.log
 *.err
 *.out
@@ -59,20 +55,41 @@ backup*/
 *.bak
 __pycache__/
 *.pyc
+*.spec
 
-# Root scripts, old configs, and loose notes
+# Block all internal Python, PowerShell, Shell scripts, and text files everywhere
+*.py
+*.ps1
+*.sh
+*.bat
+*.txt
 bbport.ini
 play_basara.bat
-*.sh
-*.py
-*.txt
-!README.md
 
-# Exceptions
+# Allow specific core source folders
+!src/**
+!gpu/**
+!packaging/windows/icons/basara4.ico
+!packaging/windows/*.rc
+!packaging/windows/*.manifest
+
+# Re-block all scripts/binaries/tools/docs/tests everywhere
+src/**/*.py
+gpu/**/*.py
+gpu/**/*.sh
+gpu/**/*.txt
+**/tests/**
+**/tools/**
+**/docs/**
+**/examples/**
+**/patches/**
+tests/
+docs/
+
+# Whitelist allowed root files
+!launcher.py
 !Play_Basara4.bat
 !basara.ini
 !CMakeLists.txt
-!launcher.py
-!build_launcher.py
-!packaging/**
-!third_party/**
+!README.md
+!.gitignore
