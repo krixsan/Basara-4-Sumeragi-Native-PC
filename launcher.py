@@ -16,10 +16,11 @@ from tkinter import messagebox
 
 from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageChops
 
-# Enable Windows High-DPI Awareness
+# Enable Windows High-DPI Awareness and Custom Taskbar App ID
 try:
     if sys.platform == "win32":
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("krixsan.basara4.sumeragi.launcher.1")
 except Exception:
     pass
 
