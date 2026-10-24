@@ -1,0 +1,76 @@
+# =============================================================================
+# Sengoku Basara 4 Sumeragi PC Port - Strict Gitignore
+# Internal source code, shaders, scripts, assets and build files are kept private.
+# =============================================================================
+
+# Block all development & build directories
+src/
+gpu/
+tools/
+scripts/
+cmake/
+out/
+build/
+extracted_game/
+user/
+backup*/
+release_package/
+.gemini/
+.vscode/
+packaging/
+temp_ctr/
+tests/
+third_party/
+docs/
+launcher/
+dlss_bridge/
+patches/
+scratch/
+
+# Block all source, scripts, config & build definition files
+*.c
+*.cpp
+*.h
+*.hpp
+*.py
+*.ps1
+*.sh
+*.ninja
+*.ninja_deps
+*.ninja_log
+CMakeLists.txt
+*.rc
+*.ico
+*.manifest
+
+# Block binaries, archives, and system packages
+*.exe
+*.dll
+*.bin
+*.zip
+*.pkg
+*.7z
+*.tar*
+
+# Block dumps, logs, images, and text notes
+*.log
+*.err
+*.out
+*.mon
+*.png
+*.jpg
+*.txt
+*.tmp
+*.bak
+
+# Block old / temporary configs and legacy scripts
+bbport.ini
+play_basara.bat
+
+# =============================================================================
+# Whitelist: Only these public release files are tracked
+# =============================================================================
+!README.md
+!Play_Basara4.bat
+!basara.ini
+!.gitignore
