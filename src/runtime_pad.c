@@ -29,6 +29,7 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #define strcasestr SDL_strcasestr /* not in the MinGW C library */
+#include "log.h"
 #endif
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
@@ -167,10 +168,37 @@ static SDL_Gamepad *port_gamepad(int p) {
 /* Logins/logouts of users 2..4 follow their port's gamepad; called under lock once a second. */
 /* Weak: tests/test_pad.c links this module without runtime_services.c. */
 __attribute__((weak)) void runtime_services_user_change(int user, int login);
+static int s_pending_change_user[PORTS];
+static int s_pending_change_login[PORTS];
+static int s_pending_change_count = 0;
+
 static void update_port_presence(void) {
     for (int p=1;p<PORTS;++p) {
         const int present=port_gamepad(p)!=NULL;
-        if (present!=ports[p].present) { ports[p].present=present; if (runtime_services_user_change) runtime_services_user_change(p+1,present); }
+        if (present!=ports[p].present) {
+            ports[p].present=present;
+            if (s_pending_change_count < PORTS) {
+                s_pending_change_user[s_pending_change_count] = p + 1;
+                s_pending_change_login[s_pending_change_count] = present;
+                s_pending_change_count++;
+            }
+        }
+    }
+}
+
+static void flush_port_notifications(void) {
+    int count = 0;
+    int users[PORTS], logins[PORTS];
+    pthread_mutex_lock(&lock);
+    if (s_pending_change_count > 0) {
+        count = s_pending_change_count;
+        memcpy(users, s_pending_change_user, (size_t)count * sizeof(int));
+        memcpy(logins, s_pending_change_login, (size_t)count * sizeof(int));
+        s_pending_change_count = 0;
+    }
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < count; ++i) {
+        if (runtime_services_user_change) runtime_services_user_change(users[i], logins[i]);
     }
 }
 int runtime_pad_user_present(int user) {
@@ -296,6 +324,7 @@ static void touch_click(PadData *d, int right) {
     d->buttons|=BTN_TOUCHPAD;
     d->touch_count=1;
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
+    memset(&d->touches[1], 0, sizeof(PadTouch));
 }
 
 /* BB_GAMEPAD (the launcher's controller choice): its SDL GUID, or part of its name. Issue #15:
@@ -366,11 +395,8 @@ static SDL_Gamepad *current_gamepad(void) {
         for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want) && !claimed_by_other_port(ids[i],0)) pick=i;
         if (requested || (((want ? pick<0 : count==0) || port_missing) && rescan_due)) { /* the plain scan found nothing usable */
             last_reinit=now;
-            SDL_free(ids); ids=NULL;
-            if (gamepad) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
-            SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
-            if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) { sdl_ready=-1; return NULL; }
-            ids=SDL_GetGamepads(&count);
+            /* Never call SDL_QuitSubSystem during active gameplay to prevent thread collision with SDL_PollEvent */
+            if (!ids) ids=SDL_GetGamepads(&count);
             if (requested) printf("Runtime: controllers re-enumerated on request: %d found\n",count);
             else if (reinits++<3) printf("Runtime: %s; devices re-enumerated: %d found\n",want && pick<0 ? "chosen gamepad not seen" : "no gamepad or a port's controller missing",count);
             for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want)) pick=i;
@@ -392,22 +418,27 @@ static SDL_Gamepad *current_gamepad(void) {
             on_preferred=want && gamepad && is_preferred(ids[pick],want);
             if (gamepad) {
                 ++connected_count;
+                LOG_INFO("pad", "Gamepad connected: %s%s", SDL_GetGamepadName(gamepad),
+                         !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
                 printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
                        !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
             }
         }
         SDL_free(ids);
     }
-    /* SacredFire: the controller touched last is the active one. Every other connected gamepad is
-     * kept open and polled ten times a second; one that produces input while the active one is idle
-     * takes over (and ends the search for the BB_GAMEPAD choice). Pick up any pad and press a button. */
+    /* Periodic gamepad activity check (throttled to 2 seconds to avoid excessive open/poll churn) */
     static uint64_t last_switch_scan;
-    if (now-last_switch_scan>100000) {
+    if (now-last_switch_scan>2000000) {
         last_switch_scan=now;
         static SDL_Gamepad *others[8]; static int other_count;
         int count=0;
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
-        for (int i=0;i<other_count;++i) if (others[i] && !SDL_GamepadConnected(others[i])) { others[i]=NULL; }
+        for (int i=0;i<other_count;++i) {
+            if (others[i] && !SDL_GamepadConnected(others[i])) {
+                SDL_CloseGamepad(others[i]);
+                others[i]=NULL;
+            }
+        }
         for (int i=0; ids && i<count; ++i) {
             if (gamepad && SDL_GetGamepadID(gamepad)==ids[i]) continue;
             if (claimed_by_other_port(ids[i],0)) continue;
@@ -421,11 +452,11 @@ static SDL_Gamepad *current_gamepad(void) {
             }
         }
         SDL_free(ids);
-        if (gamepad && !gamepad_active(gamepad)) {
+        if (!gamepad || !SDL_GamepadConnected(gamepad)) {
             for (int j=0;j<other_count;++j) {
                 if (!others[j] || !gamepad_active(others[j])) continue;
-                SDL_Gamepad *previous=gamepad;
-                gamepad=others[j]; others[j]=previous; on_preferred=1;
+                gamepad=others[j]; others[j]=NULL; on_preferred=1;
+                LOG_INFO("pad", "Gamepad switched to %s (it was used)", SDL_GetGamepadName(gamepad));
                 printf("Runtime: gamepad switched to %s (it was used)\n",SDL_GetGamepadName(gamepad));
                 break;
             }
@@ -537,8 +568,12 @@ static void load_bindings(void) {
     }
     fclose(f);
 }
-static int key_down(const bool *k, int input) {
-    for (int i=0;i<bindings[input].key_count;++i) if (k[bindings[input].keys[i]]) return 1;
+static int key_down(const bool *k, int numkeys, int input) {
+    if (!k || numkeys <= 0 || input < 0 || input >= IN_COUNT) return 0;
+    for (int i=0;i<bindings[input].key_count && i<MAX_BIND;++i) {
+        int sc = (int)bindings[input].keys[i];
+        if (sc >= 0 && sc < numkeys && k[sc]) return 1;
+    }
     return 0;
 }
 /* The bound gamepad buttons' state; triggers as their analog value. */
@@ -558,17 +593,17 @@ static int pad_value(SDL_Gamepad *g, int input) {
 static uint8_t key_axis(uint8_t value, int negative, int positive) {
     return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
 }
-static void apply_keyboard(PadData *d, const bool *k) {
+static void apply_keyboard(PadData *d, const bool *k, int numkeys) {
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
-        if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
-    if (key_down(k,IN_TOUCHPAD)) touch_click(d,0);
-    if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
-    if (key_down(k,IN_L2)) d->l2=255;
-    if (key_down(k,IN_R2)) d->r2=255;
-    d->left_x=key_axis(d->left_x,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
-    d->left_y=key_axis(d->left_y,key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
-    d->right_x=key_axis(d->right_x,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
-    d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+        if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,numkeys,i)) d->buttons|=input_buttons[i];
+    if (key_down(k,numkeys,IN_TOUCHPAD)) touch_click(d,0);
+    if (key_down(k,numkeys,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
+    if (key_down(k,numkeys,IN_L2)) d->l2=255;
+    if (key_down(k,numkeys,IN_R2)) d->r2=255;
+    d->left_x=key_axis(d->left_x,key_down(k,numkeys,IN_MOVE_LEFT),key_down(k,numkeys,IN_MOVE_RIGHT));
+    d->left_y=key_axis(d->left_y,key_down(k,numkeys,IN_MOVE_UP),key_down(k,numkeys,IN_MOVE_DOWN));
+    d->right_x=key_axis(d->right_x,key_down(k,numkeys,IN_LOOK_LEFT),key_down(k,numkeys,IN_LOOK_RIGHT));
+    d->right_y=key_axis(d->right_y,key_down(k,numkeys,IN_LOOK_UP),key_down(k,numkeys,IN_LOOK_DOWN));
 }
 
 static void sample_host_from(PadData *d, SDL_Gamepad *g, int keyboard, PadCal *cal) {
@@ -579,7 +614,8 @@ static void sample_host_from(PadData *d, SDL_Gamepad *g, int keyboard, PadCal *c
     d->timestamp=now_us();
     if (!bindings_ready) { load_bindings(); bindings_ready=1; }
     if (bbgpu_overlay_captures_input()) return; /* settings menu open: neutral input */
-    const bool *k=keyboard && SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    int numkeys = 0;
+    const bool *k=keyboard && SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(&numkeys) : NULL;
     if (g) {
         int touch_right=0;
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
@@ -612,7 +648,7 @@ static void sample_host_from(PadData *d, SDL_Gamepad *g, int keyboard, PadCal *c
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
-    if (k) apply_keyboard(d,k);
+    if (k && numkeys > 0) apply_keyboard(d,k,numkeys);
 }
 static void sample_host(PadData *d) {
     SDL_Gamepad *g=current_gamepad();
@@ -687,8 +723,9 @@ static void record_sample(const PadData *d) {
     static const char *path; static int checked, f9_was_down;
     if (!checked) { path=getenv("BB_PAD_RECORD"); checked=1; }
     if (!path || !*path || !sdl_ready) return;
-    const bool *k=SDL_GetKeyboardState(NULL);
-    const int f9=k && k[SDL_SCANCODE_F9];
+    int numkeys = 0;
+    const bool *k=SDL_GetKeyboardState(&numkeys);
+    const int f9=k && SDL_SCANCODE_F9 < numkeys && k[SDL_SCANCODE_F9];
     if (f9 && !f9_was_down) {
         if (record_file) {
             fclose(record_file); record_file=NULL;
@@ -747,6 +784,7 @@ static void replay_sample(PadData *d) {
  * while it stays down) and the time since the first one went down. With id 0 and no hold time
  * the game ignored touchpad presses: no gesture menu from the touchpad, Back or Tab. */
 static void touch_ids(PadData *d) {
+    if (d->touch_count > 2) d->touch_count = 2;
     static uint8_t next_id=1, ids[2]; static int down[2]; static uint64_t since;
     for (int i=0;i<2;++i) {
         const int now=i<d->touch_count;
@@ -774,7 +812,11 @@ static void sample(PadData *d) {
     touch_ids(d);
 }
 
-static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }
+static ABI int32_t pad_init(void) {
+    LOG_INFO("pad", "scePadInit called (pad subsystem initialized)");
+    pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock);
+    return 0;
+}
 /* Handles are the user ids: 1 is the player's port, 2..4 the split-screen ports while assigned. */
 static int handle_open(int32_t handle) {
     if (handle==PAD_HANDLE) return opened;
@@ -793,10 +835,12 @@ static ABI int32_t pad_open(int32_t user, int32_t type, int32_t index, const voi
     pthread_mutex_unlock(&lock);
     if (!assigned) return ERR_INVALID_ARG;
     if (already) return ERR_ALREADY_OPENED;
+    LOG_INFO("pad", "scePadOpen called (user=%d, type=%d)", user, type);
     printf("Runtime: pad opened for user %d (%s)\n",user,user==1 ? "SDL gamepad or keyboard" : ports[user-1].want);
     return user;
 }
 static ABI int32_t pad_close(int32_t handle) {
+    LOG_INFO("pad", "scePadClose called (handle=%d)", handle);
     if (!handle_open(handle)) return ERR_INVALID_HANDLE;
     if (handle==PAD_HANDLE) opened=0; else ports[handle-1].opened=0;
     return 0;
@@ -808,6 +852,7 @@ static ABI int32_t pad_read_state(int32_t handle, PadData *data) {
     if (handle==PAD_HANDLE) sample(data); else sample_port(data,handle-1);
     ++reads;
     pthread_mutex_unlock(&lock);
+    flush_port_notifications();
     return 0;
 }
 /* Buffered read: the port samples once per call, so one entry is returned. */
@@ -828,6 +873,7 @@ static ABI int32_t pad_info(int32_t handle, ControllerInfo *info) {
     current_gamepad();
     info->connected_count=connected_count ? connected_count : 1;
     pthread_mutex_unlock(&lock);
+    flush_port_notifications();
     return 0;
 }
 static ABI int32_t pad_vibration(int32_t handle, const uint8_t *param) {

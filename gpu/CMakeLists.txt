@@ -243,7 +243,7 @@ if (WIN32)
     set_source_files_properties(../src/isa_emulate.c PROPERTIES COMPILE_OPTIONS "-mgeneral-regs-only")
     # Newer clang (MSYS2) warns about write-only counters kept for diagnostics.
     target_compile_options(sacredfire PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror
-        -Wno-unknown-warning-option -Wno-unused-but-set-global>)
+        -Wno-unknown-warning-option -Wno-unused-but-set-global -fms-extensions>)
     target_include_directories(sacredfire PRIVATE .. ../src)
     target_link_libraries(sacredfire PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 dbghelp dxgi winhttp -pthread)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.

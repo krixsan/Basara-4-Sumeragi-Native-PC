@@ -10,6 +10,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "third_party/LibAtrac9/C/src/libatrac9.h"
+#include "log.h"
 
 #define ERR_INVALID_CONTEXT ((int32_t)0x80930002)
 #define ERR_INVALID_INSTANCE ((int32_t)0x80930003)
@@ -148,6 +149,10 @@ static void at9_reset(Instance *in) {
     in->initialized = Atrac9InitDecoder(in->handle,in->config)==0;
     if (in->initialized) Atrac9GetCodecInfo(in->handle,&in->info);
     in->frames=0; in->superframe_remain=(uint32_t)in->info.superframeSize;
+    if (in->initialized) {
+        LOG_INFO("ajm", "ATRAC9 decoder initialized: %d ch, %d Hz, frame %d samples",
+                 in->info.channels, in->info.samplingRate, in->info.frameSamples);
+    }
     if (ajm_trace())
         printf("Audio trace: ATRAC9 init %s: %d ch, %d Hz, frame %d samples, %d frames/superframe, superframe %d bytes, format %d, flags %#x\n",
                in->initialized ? "ok" : "FAILED",in->info.channels,in->info.samplingRate,in->info.frameSamples,
@@ -377,7 +382,9 @@ static ABI int32_t ajm_initialize(int64_t reserved, uint32_t *out) {
         contexts[i]=calloc(1,sizeof(Context));
         pthread_mutex_unlock(&lock);
         if (!contexts[i]) return ERR_OUT_OF_RESOURCES;
-        *out=i; puts("Runtime: Ajm context initialized (ATRAC9 via LibAtrac9)");
+        *out=i;
+        LOG_INFO("ajm", "sceAjmInitialize called (context=%u, ATRAC9 via LibAtrac9)", i);
+        puts("Runtime: Ajm context initialized (ATRAC9 via LibAtrac9)");
         return 0;
     }
     pthread_mutex_unlock(&lock);

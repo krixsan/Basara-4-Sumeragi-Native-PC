@@ -140,4 +140,8 @@ void runtime_trophy_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
 void runtime_savedata_report(void);
 void runtime_thread_attach_host(const char *name);
+#ifdef _WIN32
+struct _EXCEPTION_POINTERS;
+long fatal_exception(struct _EXCEPTION_POINTERS *info);
+#endif
 #endif

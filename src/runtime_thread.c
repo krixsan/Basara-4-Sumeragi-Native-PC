@@ -17,6 +17,7 @@
 #include <unistd.h>
 #ifdef _WIN32
 #include <windows.h>
+#include "log.h"
 #else
 #include <sys/syscall.h>
 #include <sys/mman.h>
@@ -365,16 +366,19 @@ static void dump_thread_snapshots(int snapshot_num, int sec) {
 
 static DWORD WINAPI watchdog_sampler(LPVOID param) {
     (void)param;
-    const char *env = getenv("BB_DUMP_STACKS");
-    if (!env || env[0] != '1') return 0;
-    Sleep(12000);
-    dump_thread_snapshots(1, 12);
-    Sleep(8000);
-    dump_thread_snapshots(2, 20);
-    Sleep(5000);
-    dump_thread_snapshots(3, 25);
-    Sleep(10000);
-    dump_thread_snapshots(4, 35);
+    __try {
+        const char *env = getenv("BB_DUMP_STACKS");
+        if (!env || env[0] != '1') return 0;
+        Sleep(12000);
+        dump_thread_snapshots(1, 12);
+        Sleep(8000);
+        dump_thread_snapshots(2, 20);
+        Sleep(5000);
+        dump_thread_snapshots(3, 25);
+        Sleep(10000);
+        dump_thread_snapshots(4, 35);
+    } __except(fatal_exception(GetExceptionInformation())) {
+    }
     return 0;
 }
 #endif
@@ -394,7 +398,15 @@ static void *host_start(void *p) {
 #endif
     attach(t);
     set_host_name(t->name);
+#ifdef _WIN32
+    LOG_INFO("thread", "Guest thread '%s' starting on host", t->name);
+    __try {
+        if (!exit_setjmp(t)) t->result=t->entry(t->argument);
+    } __except(fatal_exception(GetExceptionInformation())) {
+    }
+#else
     if (!exit_setjmp(t)) t->result=t->entry(t->argument);
+#endif
     runtime_kernel_thread_exit();
     runtime_thread_keys_cleanup();
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
@@ -441,11 +453,15 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
         uintptr_t img_b = runtime_probe_image(&img_sz);
         int64_t e_off = (img_b && (uintptr_t)t->entry >= img_b && (uintptr_t)t->entry < img_b + img_sz) ? (int64_t)((uintptr_t)t->entry - img_b) : -1;
         if (e_off >= 0) {
+            LOG_INFO("thread", "Thread '%s' created (entry=%p, guest offset=0x%llx, stack=%llu, prio=%d)",
+                     t->name, t->entry, (unsigned long long)e_off, (unsigned long long)stack, t->attr.prio);
             printf("Runtime: guest thread '%s' created (stack=%llu, prio=%d, entry=%p, guest offset=0x%llx)\n",
                    t->name, (unsigned long long)stack, t->attr.prio, t->entry, (unsigned long long)e_off);
             fprintf(stderr, "[Thread] '%s' created: entry=%p (guest offset=0x%llx), stack=%llu, prio=%d\n",
                     t->name, t->entry, (unsigned long long)e_off, (unsigned long long)stack, t->attr.prio);
         } else {
+            LOG_INFO("thread", "Thread '%s' created (entry=%p, stack=%llu, prio=%d)",
+                     t->name, t->entry, (unsigned long long)stack, t->attr.prio);
             printf("Runtime: guest thread '%s' created (stack=%llu, prio=%d, entry=%p)\n",
                    t->name, (unsigned long long)stack, t->attr.prio, t->entry);
             fprintf(stderr, "[Thread] '%s' created: entry=%p, stack=%llu, prio=%d\n",

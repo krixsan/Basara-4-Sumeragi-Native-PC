@@ -17,6 +17,7 @@
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include <windows.h>
+#include "log.h"
 #endif
 
 #define PORTS 25
@@ -101,6 +102,7 @@ static int movie_audio_active(void) {
     return active;
 }
 void runtime_audio_stop_movie(void) {
+    LOG_INFO("audio", "Video/Audio movie stream stopped");
     pthread_mutex_lock(&s_movie_lock);
     s_movie_active=0;
     s_movie_last_write_ns=0;
@@ -179,6 +181,9 @@ static void init_avrt_symbols(void) {
 
 static void *feeder_main(void *arg) {
     Port *p=(Port *)arg;
+#ifdef _WIN32
+    __try {
+#endif
     SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
 #ifdef _WIN32
     init_avrt_symbols();
@@ -226,8 +231,8 @@ static void *feeder_main(void *arg) {
         /* One feeder owns the movie ring (normally port 0). Mixing here, after the port ring
          * sample is chosen, keeps the movie independent from sceAudioOutOutput's cadence and
          * silence writes; either source may be empty without disturbing the other. */
-        const int movie_here = s_movie_port >= 0 && p == &ports[s_movie_port] && need > 0;
-        if (movie_here) pthread_mutex_lock(&s_movie_lock);
+        pthread_mutex_lock(&s_movie_lock);
+        const int movie_here = (s_movie_port >= 0 && p == &ports[s_movie_port] && need > 0);
         for (int i=0;i<need;++i) {
             float l, r;
             if (p->primed && p->ring_avail > 0) {
@@ -269,7 +274,7 @@ static void *feeder_main(void *arg) {
             mix[i*2+0]=l; mix[i*2+1]=r;
             produced=i+1;
         }
-        if (movie_here) pthread_mutex_unlock(&s_movie_lock);
+        pthread_mutex_unlock(&s_movie_lock);
         pthread_mutex_unlock(&p->lock);
         if (stop) break;
         if (produced>0 && stream) SDL_PutAudioStreamData(stream,mix,produced*2*(int)sizeof(float));
@@ -282,10 +287,15 @@ static void *feeder_main(void *arg) {
     }
 #endif
     free(mix);
+#ifdef _WIN32
+    } __except(fatal_exception(GetExceptionInformation())) {
+    }
+#endif
     return NULL;
 }
 
 static ABI int32_t audio_init(void) {
+    LOG_INFO("audio", "Audio subsystem initializing (sceAudioOutInit)");
     pthread_mutex_lock(&table_lock);
     int32_t r=initialized ? ERR_ALREADY_INIT : 0;
     initialized=1;
@@ -327,13 +337,17 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
         if (p->stream) {
             SDL_ResumeAudioStreamDevice(p->stream);
             p->feeder_stop=0;
+            pthread_mutex_lock(&s_movie_lock);
             if (s_movie_port < 0) s_movie_port = id; /* exactly one feeder mixes movie audio */
+            pthread_mutex_unlock(&s_movie_lock);
             p->feeder_running=pthread_create(&p->feeder,NULL,feeder_main,p)==0;
             if (!p->feeder_running)
                 fprintf(stderr,"Runtime: audio feeder thread failed; port %d pushes directly\n",id);
         }
         else fprintf(stderr,"Runtime: SDL audio stream failed (%s); port %d uses the timer sink\n",SDL_GetError(),id);
     }
+    LOG_INFO("audio", "Audio port %d opened (handle=0x%08x, type=%d, ch=%d, rate=%u, frames=%d)",
+             id, (type<<16) | id | 0x20000000, type, p->channels, freq, p->frames);
     p->stats=getenv("BB_AUDIO_STATS")!=NULL;
     const char *dump=getenv("BB_AUDIO_DUMP");
     if (dump) {
@@ -369,13 +383,15 @@ static ABI int32_t audio_close(int32_t handle) {
 #endif
         if (dump) fclose(dump);
         if (stream) SDL_DestroyAudioStream(stream);
+        pthread_mutex_lock(&s_movie_lock);
         if (s_movie_port == (int)(p - ports)) {
-            pthread_mutex_lock(&s_movie_lock);
             s_movie_active=0;
             s_movie_last_write_ns=0;
             s_movie_read=s_movie_write=s_movie_avail=0;
-            pthread_mutex_unlock(&s_movie_lock);
+            s_movie_port=-1;
         }
+        pthread_mutex_unlock(&s_movie_lock);
+        LOG_INFO("audio", "Audio port %d closed", (int)(p - ports));
     }
     pthread_mutex_unlock(&table_lock);
     return p ? 0 : error;
@@ -523,6 +539,11 @@ static void movie_downmix(const int16_t *s, uint32_t channels, float *out_l, flo
 }
 void runtime_audio_play_movie_pcm16(const void *pcm16, uint32_t size_bytes, uint32_t channels, uint32_t sample_rate) {
     if (!pcm16 || !size_bytes || !channels) return;
+    static int s_movie_stream_logged = 0;
+    if (!s_movie_stream_logged) {
+        s_movie_stream_logged = 1;
+        LOG_INFO("audio", "Video/Audio stream starting: %u bytes, %u ch, %u Hz", size_bytes, channels, sample_rate);
+    }
     if (sample_rate == 0) sample_rate = 48000;
     const uint32_t frames = size_bytes / (channels * (uint32_t)sizeof(int16_t));
     if (!frames) return;

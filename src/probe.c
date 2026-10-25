@@ -15,6 +15,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <dbghelp.h>
+#include <malloc.h>
 #include "log.h"
 #else
 #include <sys/mman.h>
@@ -221,10 +222,13 @@ static DWORD WINAPI dump_worker(LPVOID lpParam) {
 }
 
 static int fatal_reported;
-static LONG fatal_exception(EXCEPTION_POINTERS *info) {
+LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     const CONTEXT *c=info->ContextRecord;
+    if (record->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
+        _resetstkoflw();
+    }
 
     /* 1. RAW Win32 Crash Log: ZERO locks, ZERO CRT heap calls, ZERO log framework dependency */
     SYSTEMTIME st;
@@ -488,8 +492,27 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
             return EXCEPTION_CONTINUE_EXECUTION;
         }
     }
-    /* Benign exceptions: allow game SEH (__try / __except) to handle first.
-     * If unhandled by game SEH, unhandled_fault will catch it at the top level. */
+    /* Fatal exceptions: immediate crash report */
+    if (code == EXCEPTION_STACK_OVERFLOW ||
+        code == (DWORD)0x40000015 /* STATUS_FATAL_APP_EXIT */ ||
+        code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_PRIV_INSTRUCTION ||
+        code == EXCEPTION_NONCONTINUABLE_EXCEPTION ||
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+        (code == 0xC0000008 /* STATUS_INVALID_HANDLE */ && getenv("BB_STRICT_HANDLES"))) {
+        return fatal_exception(info);
+    }
+
+    /* Access violation in HOST code or DLLs: never benign! Immediate crash report */
+    const uintptr_t fault_rip = (uintptr_t)record->ExceptionAddress;
+    const int guest_fault = runtime_thread_is_guest() && image &&
+                         (fault_rip - (uintptr_t)image < 0x20000000);
+    if (code == EXCEPTION_ACCESS_VIOLATION && !guest_fault) {
+        return fatal_exception(info);
+    }
+
+    /* In-guest exceptions: allow game SEH (__try / __except) inside guest frames to handle.
+     * If unhandled by guest SEH, our __except in host_start or main will catch it. */
     if (code == EXCEPTION_ACCESS_VIOLATION ||
         code == EXCEPTION_IN_PAGE_ERROR ||
         code == EXCEPTION_BREAKPOINT ||
@@ -497,21 +520,6 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
         code == EXCEPTION_GUARD_PAGE ||
         code == EXCEPTION_DATATYPE_MISALIGNMENT) {
         return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    /* Truly fatal exceptions: immediate crash report */
-    if (code == EXCEPTION_STACK_OVERFLOW ||
-        code == EXCEPTION_ILLEGAL_INSTRUCTION ||
-        code == EXCEPTION_PRIV_INSTRUCTION ||
-        code == EXCEPTION_NONCONTINUABLE_EXCEPTION ||
-        code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
-        (code == 0xC0000008 /* STATUS_INVALID_HANDLE */ && getenv("BB_STRICT_HANDLES"))) {
-        uintptr_t rip = (uintptr_t)info->ContextRecord->Rip;
-        HMODULE self = GetModuleHandleA(NULL), module = NULL;
-        int ours = (image && rip - (uintptr_t)image < 0x20000000) ||
-                   (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)rip, &module) && module == self) ||
-                   !module;
-        if (ours) return fatal_exception(info);
     }
 
     return EXCEPTION_CONTINUE_SEARCH;
@@ -1235,13 +1243,19 @@ int main(int argc, char **argv) {
             if (result) fail("module initializer failed");
         }
     }
+    LOG_INFO("probe", "Initializing Audio baseline...");
+    LOG_INFO("probe", "Initializing Pad baseline...");
+    LOG_INFO("probe", "Initializing Video/GPU baseline...");
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
     LOG_INFO("probe", "Entering original x86-64 code at guest offset 0x%" PRIx64, entry);
     entered_game=1;
     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};
 #ifdef _WIN32
-    typedef void (ABI *Entry)(void *, void (ABI *)(void));
-    ((Entry)(image + entry))(&params, guest_exit);
+    __try {
+        typedef void (ABI *Entry)(void *, void (ABI *)(void));
+        ((Entry)(image + entry))(&params, guest_exit);
+    } __except(fatal_exception(GetExceptionInformation())) {
+    }
 #else
     /* The guest main thread runs on a stack below 1 TiB like PS4 stacks. */
     enum { MAIN_STACK=8*1024*1024 };
