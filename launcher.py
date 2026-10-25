@@ -147,6 +147,64 @@ def write_ini(data):
         print(f"Warning: unable to save {target}: {e}")
 
 
+def check_game_integrity(boot_bin=None):
+    """
+    Checks the integrity of boot-linked.bin and link.json.
+    Verifies:
+    1. boot-linked.bin exists and size is >= 29,000,000 bytes (smaller size indicates missing audio/threading SPRX modules).
+    2. out/link.json contains at least 7 modules, including libSceNgs2.sprx and libSceAjm.sprx.
+    Returns (is_valid: bool, issue_description: str | None).
+    """
+    if not boot_bin:
+        for cand in ["boot-linked.bin", os.path.join("out", "boot-linked.bin")]:
+            if os.path.isfile(cand):
+                boot_bin = cand
+                break
+
+    if not boot_bin or not os.path.isfile(boot_bin):
+        return False, "boot-linked.bin not found"
+
+    # 1. Size check: must be at least 29,000,000 bytes
+    try:
+        size = os.path.getsize(boot_bin)
+        if size < 29000000:
+            return False, f"Game files incomplete (Audio modules missing) — boot-linked.bin size {size:,} bytes < 29,000,000 bytes"
+    except Exception as e:
+        return False, f"Cannot verify boot-linked.bin size: {e}"
+
+    # 2. link.json check: must contain >= 7 modules including libSceNgs2.sprx and libSceAjm.sprx
+    link_json = None
+    cands = []
+    if boot_bin:
+        cands.append(os.path.join(os.path.dirname(boot_bin), "link.json"))
+    cands.extend([os.path.join("out", "link.json"), "link.json"])
+    for cand in cands:
+        if os.path.isfile(cand):
+            link_json = cand
+            break
+
+    if link_json:
+        try:
+            with open(link_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            mods = data.get("modules", [])
+            files = [m.get("file", "") for m in mods if isinstance(m, dict)]
+            if len(mods) < 7 or "libSceNgs2.sprx" not in files or "libSceAjm.sprx" not in files:
+                return False, (
+                    f"Incomplete module linking ({len(mods)}/7 modules linked). "
+                    f"Missing native audio modules (libSceNgs2/libSceAjm)."
+                )
+        except Exception:
+            pass
+
+    return True, None
+
+
+def check_link_health(boot_bin=None):
+    """Backward compatibility alias for check_game_integrity."""
+    return check_game_integrity(boot_bin)
+
+
 def verify_game_installation():
     missing = []
     exe = "basara_pc.exe"
@@ -174,7 +232,13 @@ def verify_game_installation():
     else:
         missing.append("Game folder ('extracted_game/app0' or 'app0')")
 
-    return missing, exe, boot_bin, app0, eboot_found
+    link_warning = None
+    if boot_bin:
+        is_healthy, warning = check_link_health(boot_bin)
+        if not is_healthy:
+            link_warning = warning
+
+    return missing, exe, boot_bin, app0, eboot_found, link_warning
 
 
 def check_dependencies(show_dialogs=True):
@@ -794,11 +858,115 @@ class FirstRunWizard(tk.Toplevel):
             dest_dir = os.path.join("extracted_game", "app0")
             os.makedirs(dest_dir, exist_ok=True)
             dest_eboot = os.path.join(dest_dir, "eboot.bin")
+            source_dir = os.path.dirname(os.path.abspath(self.selected_eboot))
+
+            # Step 1.a: Validasi file eboot.bin
+            self.append_log("Validating eboot.bin...")
+            if not os.path.isfile(self.selected_eboot):
+                raise FileNotFoundError(f"File eboot.bin not found: '{self.selected_eboot}'")
 
             if os.path.abspath(self.selected_eboot) != os.path.abspath(dest_eboot):
                 self.append_log(f"Copying {self.selected_eboot} -> {dest_eboot}...")
                 shutil.copy2(self.selected_eboot, dest_eboot)
 
+            # Step 1.b: COPY/EKSTRAK semua modul .sprx dari folder game PS4 user
+            # ke folder user/sys_modules/ atau extracted_game/app0/sce_module/
+            self.append_log("Scanning and extracting PS4 system modules (.sprx / .prx)...")
+            dest_sce_mod = os.path.join(dest_dir, "sce_module")
+            os.makedirs(dest_sce_mod, exist_ok=True)
+            user_sys_mod = os.path.join(os.getcwd(), "user", "sys_modules")
+            os.makedirs(user_sys_mod, exist_ok=True)
+
+            required_sprx = (
+                "libSceNgs2.sprx",
+                "libSceAjm.sprx",
+                "libSceFiber.sprx",
+                "libSceUlt.sprx",
+                "ulobjmgr.sprx"
+            )
+
+            cand_dirs = [
+                os.path.join(source_dir, "sce_module"),
+                source_dir,
+                os.path.join(os.path.dirname(source_dir), "sce_module"),
+                os.path.join(os.path.dirname(source_dir), "sys_modules"),
+                os.path.join(os.path.dirname(source_dir), "user", "sys_modules"),
+                user_sys_mod,
+                dest_sce_mod,
+                os.getcwd(),
+                os.path.join(os.getcwd(), "user")
+            ]
+
+            # 1. Search for any .zip archives containing modules (e.g. 11.00_sys_modules.zip)
+            found_zips = set()
+            for cdir in cand_dirs:
+                if os.path.isdir(cdir):
+                    for zfile in glob.glob(os.path.join(cdir, "*.zip")):
+                        found_zips.add(os.path.abspath(zfile))
+
+            for zp in found_zips:
+                try:
+                    with zipfile.ZipFile(zp, "r") as zf:
+                        names = zf.namelist()
+                        for name in names:
+                            fname = os.path.basename(name)
+                            if fname.endswith((".sprx", ".prx")):
+                                for out_target in (dest_sce_mod, user_sys_mod):
+                                    tgt = os.path.join(out_target, fname)
+                                    if not os.path.isfile(tgt) or os.path.getsize(tgt) == 0:
+                                        with zf.open(name) as s, open(tgt, "wb") as d:
+                                            shutil.copyfileobj(s, d)
+                except Exception:
+                    pass
+
+            # 2. Copy file modules from candidate source directories
+            for cdir in cand_dirs:
+                if os.path.isdir(cdir) and cdir not in (dest_sce_mod, user_sys_mod):
+                    try:
+                        for item in os.listdir(cdir):
+                            if item.endswith((".sprx", ".prx")):
+                                s_file = os.path.join(cdir, item)
+                                if os.path.isfile(s_file):
+                                    for out_target in (dest_sce_mod, user_sys_mod):
+                                        d_file = os.path.join(out_target, item)
+                                        if not os.path.exists(d_file):
+                                            try:
+                                                shutil.copy2(s_file, d_file)
+                                            except Exception:
+                                                pass
+                    except Exception:
+                        pass
+
+            # 3. Bi-directional sync between dest_sce_mod and user_sys_mod
+            for s_mod in os.listdir(dest_sce_mod):
+                if s_mod.endswith((".sprx", ".prx")):
+                    u_file = os.path.join(user_sys_mod, s_mod)
+                    if not os.path.exists(u_file):
+                        try:
+                            shutil.copy2(os.path.join(dest_sce_mod, s_mod), u_file)
+                        except Exception:
+                            pass
+            for u_mod in os.listdir(user_sys_mod):
+                if u_mod.endswith((".sprx", ".prx")):
+                    d_file = os.path.join(dest_sce_mod, u_mod)
+                    if not os.path.exists(d_file):
+                        try:
+                            shutil.copy2(os.path.join(user_sys_mod, u_mod), d_file)
+                        except Exception:
+                            pass
+
+            # Step 1.3: Jika file .sprx tidak ditemukan di folder user, tampilkan error yang jelas
+            missing_sprx = [
+                m for m in required_sprx
+                if not (os.path.isfile(os.path.join(dest_sce_mod, m)) or os.path.isfile(os.path.join(user_sys_mod, m)))
+            ]
+            if missing_sprx:
+                raise RuntimeError(
+                    "Modul PS4 tidak lengkap, pastikan Anda meng-copy seluruh folder game, bukan hanya eboot.bin.\n\n"
+                    f"Missing audio/system modules: {', '.join(missing_sprx)}"
+                )
+
+            # Step 1.c: BARU KEMUDIAN jalankan link_modules.py dan link_libc.py
             out_dir = os.path.join(os.getcwd(), "out")
             os.makedirs(out_dir, exist_ok=True)
 
@@ -809,11 +977,16 @@ class FirstRunWizard(tk.Toplevel):
             def status_cb(msg):
                 self.after(0, lambda m=msg: self.append_log(m))
 
-            auto_builder.auto_prepare(dest_dir, out_dir, status_callback=status_cb)
+            auto_builder.auto_prepare(dest_dir, out_dir, source_hint_dir=source_dir, status_callback=status_cb)
 
             boot_linked = os.path.join(out_dir, "boot-linked.bin")
             if not os.path.isfile(boot_linked) or os.path.getsize(boot_linked) == 0:
                 raise RuntimeError("out/boot-linked.bin was not created or is empty!")
+
+            # Verify game integrity
+            is_valid, msg = check_game_integrity(boot_linked)
+            if not is_valid:
+                raise RuntimeError(f"Build verification failed: {msg}")
 
             self.after(0, self.on_build_success)
 
@@ -1125,14 +1298,16 @@ class BasaraLauncher(tk.Tk):
         self.pills_res = self._create_pill_set(98, 26)     # Resolution (4 items)
         self.pills_fps = self._create_pill_set(65, 26)     # FPS (6 items)
         self.pills_aniso = self._create_pill_set(78, 26)   # Anisotropy (5 items)
-        self.pills_prio = self._create_pill_set(48, 24)    # Priority (3 items)
-        self.pills_telem = self._create_pill_set(48, 24)   # Telemetry (3 items)
+        self.pills_prio = self._create_pill_set(44, 24)    # Priority (3 items)
+        self.pills_telem = self._create_pill_set(44, 24)   # Telemetry (3 items)
 
-        # Tool button textures (118 x 26)
-        self.btn_tool_norm = self._create_pill_texture(118, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
-        self.btn_tool_hov = self._create_pill_texture(118, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
-        self.btn_wiz_norm = self._create_pill_texture(118, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
-        self.btn_wiz_hov = self._create_pill_texture(118, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
+        # Tool button textures
+        self.btn_tool_norm = self._create_pill_texture(104, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
+        self.btn_tool_hov = self._create_pill_texture(104, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
+        self.btn_wiz_norm = self._create_pill_texture(114, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
+        self.btn_wiz_hov = self._create_pill_texture(114, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
+        self.btn_reb_norm = self._create_pill_texture(114, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
+        self.btn_reb_hov = self._create_pill_texture(114, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
 
         # 4. Modern Toggle Switches (40 x 20)
         self.switch_on = self._create_switch_texture(True)
@@ -1143,6 +1318,8 @@ class BasaraLauncher(tk.Tk):
         self.btn_play_hover = self._create_gradient_btn(270, 50, (220, 38, 38), (163, 18, 25), (246, 196, 69))
         self.btn_init_normal = self._create_gradient_btn(270, 50, (212, 175, 55), (142, 113, 32), (246, 196, 69), border_width=2)
         self.btn_init_hover = self._create_gradient_btn(270, 50, (246, 196, 69), (175, 140, 40), (255, 255, 255), border_width=2)
+        self.btn_repair_normal = self._create_gradient_btn(270, 50, (212, 90, 24), (142, 45, 12), (246, 170, 69), border_width=2)
+        self.btn_repair_hover = self._create_gradient_btn(270, 50, (235, 105, 30), (170, 60, 18), (255, 210, 100), border_width=2)
         self.btn_play_disabled = self._create_gradient_btn(270, 50, (42, 48, 60), (28, 32, 42), (59, 68, 85))
 
     def _create_pill_texture(self, w, h, fill, outline, radius=6, width=1):
@@ -1405,11 +1582,11 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag4, "<Button-1>", lambda e: self._toggle_setting("show_fps"))
 
         # =====================================================================
-        # 7. TOOLBAR: CONTROLLER MAPPER, SETUP WIZARD & HOTKEY NOTICE
+        # 7. TOOLBAR: CONTROLLER MAPPER, SETUP WIZARD, REBUILD FILES & SELECTORS
         # =====================================================================
-        # Gamepad Button
+        # Gamepad Button (104 x 26)
         self.tool_img = self.canvas.create_image(36, 394, image=self.btn_tool_norm, anchor="nw")
-        self.tool_txt = self.canvas.create_text(36 + 59, 394 + 13, text="🎮 Gamepad", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        self.tool_txt = self.canvas.create_text(36 + 52, 394 + 13, text="🎮 Gamepad", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
         tag_tool = "btn_map_controller"
         for item in (self.tool_img, self.tool_txt):
             self.canvas.itemconfig(item, tags=(tag_tool,))
@@ -1417,9 +1594,9 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag_tool, "<Leave>", self._on_tool_leave)
         self.canvas.tag_bind(tag_tool, "<Button-1>", lambda e: self.open_gamepad_mapper())
 
-        # Setup Wizard Button
-        self.wiz_img = self.canvas.create_image(160, 394, image=self.btn_wiz_norm, anchor="nw")
-        self.wiz_txt = self.canvas.create_text(160 + 59, 394 + 13, text="⚡ Setup Wizard", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD_BRIGHT)
+        # Setup Wizard Button (114 x 26)
+        self.wiz_img = self.canvas.create_image(146, 394, image=self.btn_wiz_norm, anchor="nw")
+        self.wiz_txt = self.canvas.create_text(146 + 57, 394 + 13, text="⚡ Setup Wizard", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD_BRIGHT)
         tag_wiz = "btn_setup_wizard"
         for item in (self.wiz_img, self.wiz_txt):
             self.canvas.itemconfig(item, tags=(tag_wiz,))
@@ -1427,9 +1604,19 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag_wiz, "<Leave>", self._on_wiz_leave)
         self.canvas.tag_bind(tag_wiz, "<Button-1>", lambda e: self.open_setup_wizard(force=True))
 
+        # Rebuild Files Button (114 x 26)
+        self.reb_img = self.canvas.create_image(266, 394, image=self.btn_reb_norm, anchor="nw")
+        self.reb_txt = self.canvas.create_text(266 + 57, 394 + 13, text="🔧 Rebuild Files", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        tag_reb = "btn_rebuild_files"
+        for item in (self.reb_img, self.reb_txt):
+            self.canvas.itemconfig(item, tags=(tag_reb,))
+        self.canvas.tag_bind(tag_reb, "<Enter>", self._on_reb_enter)
+        self.canvas.tag_bind(tag_reb, "<Leave>", self._on_reb_leave)
+        self.canvas.tag_bind(tag_reb, "<Button-1>", lambda e: self.on_manual_rebuild())
+
         # Process Priority Selector
         self.canvas.create_text(
-            290, 407,
+            392, 407,
             text="PRIORITY",
             font=(FONT_FAMILY, 7, "bold"),
             fill=COLOR_TEXT_MUTED,
@@ -1442,11 +1629,11 @@ class BasaraLauncher(tk.Tk):
         ]
         self.prio_items = []
         for i, (label, val) in enumerate(self.prio_options):
-            x = 345 + i * 52
+            x = 442 + i * 46
             y = 395
             act, inact, hov = self.pills_prio
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
-            txt_id = self.canvas.create_text(x + 24, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
+            txt_id = self.canvas.create_text(x + 22, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
 
             tag = f"btn_prio_{i}"
             self.canvas.itemconfig(img_id, tags=(tag,))
@@ -1460,7 +1647,7 @@ class BasaraLauncher(tk.Tk):
 
         # Crash Telemetry Selector
         self.canvas.create_text(
-            510, 407,
+            590, 407,
             text="TELEMETRY",
             font=(FONT_FAMILY, 7, "bold"),
             fill=COLOR_TEXT_MUTED,
@@ -1473,11 +1660,11 @@ class BasaraLauncher(tk.Tk):
         ]
         self.telem_items = []
         for i, (label, val) in enumerate(self.telem_options):
-            x = 574 + i * 52
+            x = 650 + i * 46
             y = 395
             act, inact, hov = self.pills_telem
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
-            txt_id = self.canvas.create_text(x + 24, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
+            txt_id = self.canvas.create_text(x + 22, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
 
             tag = f"btn_telem_{i}"
             self.canvas.itemconfig(img_id, tags=(tag,))
@@ -1490,7 +1677,7 @@ class BasaraLauncher(tk.Tk):
             self.telem_items.append((img_id, txt_id, val))
 
         self.canvas.create_text(
-            738, 407,
+            798, 407,
             text="📸 F12  •  Menu: Insert / L3+R3",
             font=(FONT_FAMILY, 8),
             fill=COLOR_TEXT_MUTED,
@@ -1710,6 +1897,24 @@ class BasaraLauncher(tk.Tk):
         self.canvas.config(cursor="arrow")
         self.canvas.itemconfig(self.wiz_img, image=self.btn_wiz_norm)
 
+    def _on_reb_enter(self, e):
+        self.canvas.config(cursor="hand2")
+        self.canvas.itemconfig(self.reb_img, image=self.btn_reb_hov)
+
+    def _on_reb_leave(self, e):
+        self.canvas.config(cursor="arrow")
+        self.canvas.itemconfig(self.reb_img, image=self.btn_reb_norm)
+
+    def on_manual_rebuild(self):
+        confirm = messagebox.askyesno(
+            "Rebuild Game Files",
+            "This will rebuild your game files. Continue?",
+            icon="question"
+        )
+        if not confirm:
+            return
+        self.start_repair_flow(launch_after=False)
+
     def open_setup_wizard(self, force=True):
         FirstRunWizard(
             parent=self,
@@ -1718,7 +1923,7 @@ class BasaraLauncher(tk.Tk):
         )
 
     def check_first_run_wizard(self):
-        missing, exe, boot_bin, app0, eboot_found = verify_game_installation()
+        missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
         if not boot_bin and not eboot_found and self.first_run_done not in ("1", "true"):
             self.open_setup_wizard(force=False)
 
@@ -1762,6 +1967,9 @@ class BasaraLauncher(tk.Tk):
         elif self.state == "READY_TO_INIT":
             self.canvas.config(cursor="hand2")
             self.canvas.itemconfig(self.play_img_id, image=self.btn_init_hover)
+        elif self.state == "REPAIR_REQUIRED":
+            self.canvas.config(cursor="hand2")
+            self.canvas.itemconfig(self.play_img_id, image=self.btn_repair_hover)
 
     def _on_play_leave(self, event):
         self.canvas.config(cursor="arrow")
@@ -1769,17 +1977,22 @@ class BasaraLauncher(tk.Tk):
             self.canvas.itemconfig(self.play_img_id, image=self.btn_play_normal)
         elif self.state == "READY_TO_INIT":
             self.canvas.itemconfig(self.play_img_id, image=self.btn_init_normal)
+        elif self.state == "REPAIR_REQUIRED":
+            self.canvas.itemconfig(self.play_img_id, image=self.btn_repair_normal)
 
     def _on_play_click(self, event):
         if self.state == "READY_TO_PLAY":
             self.launch_game()
         elif self.state == "READY_TO_INIT":
-            missing, exe, boot_bin, app0, eboot_found = verify_game_installation()
+            missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
             if app0 and eboot_found:
                 self.start_initialization_flow(app0)
+        elif self.state == "REPAIR_REQUIRED":
+            self.start_repair_flow(launch_after=True)
 
     def evaluate_system_readiness(self):
-        missing, exe, boot_bin, app0, eboot_found = verify_game_installation()
+        missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
+        link_warning = extra[0] if extra else None
 
         # Visual Dependency Badges
         ds = getattr(self, "dep_status", None) or {}
@@ -1790,13 +2003,22 @@ class BasaraLauncher(tk.Tk):
         badges_str = f"Vulkan {vk_b}  •  VC++ {vc_b}  •  Win10+ {win_b}  •  Storage {disk_b}"
 
         if boot_bin:
-            self.state = "READY_TO_PLAY"
-            self.canvas.itemconfig(self.status_dot, fill=COLOR_SUCCESS)
-            self.canvas.itemconfig(self.status_title, text="System Verified — Ready to Play", fill=COLOR_SUCCESS)
-            self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Vulkan runtime & boot-linked.bin active", fill=COLOR_TEXT_SUB)
-            self.canvas.itemconfig(self.play_img_id, image=self.btn_play_normal)
-            self.canvas.itemconfig(self.play_txt_id, text="PLAY GAME", fill=COLOR_TEXT_WHITE)
-            self.canvas.config(cursor="arrow")
+            if link_warning:
+                self.state = "REPAIR_REQUIRED"
+                self.canvas.itemconfig(self.status_dot, fill=COLOR_ERROR)
+                self.canvas.itemconfig(self.status_title, text="⚠️ Game files incomplete (Audio modules missing)", fill=COLOR_ERROR)
+                self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   {link_warning}", fill=COLOR_AMBER)
+                self.canvas.itemconfig(self.play_img_id, image=self.btn_repair_normal)
+                self.canvas.itemconfig(self.play_txt_id, text="🔧 REPAIR & PLAY", fill=COLOR_TEXT_WHITE)
+                self.canvas.config(cursor="arrow")
+            else:
+                self.state = "READY_TO_PLAY"
+                self.canvas.itemconfig(self.status_dot, fill=COLOR_SUCCESS)
+                self.canvas.itemconfig(self.status_title, text="System Verified — Ready to Play", fill=COLOR_SUCCESS)
+                self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Vulkan runtime & boot-linked.bin active", fill=COLOR_TEXT_SUB)
+                self.canvas.itemconfig(self.play_img_id, image=self.btn_play_normal)
+                self.canvas.itemconfig(self.play_txt_id, text="PLAY GAME", fill=COLOR_TEXT_WHITE)
+                self.canvas.config(cursor="arrow")
         elif eboot_found and HAS_AUTO_BUILDER:
             self.state = "READY_TO_INIT"
             self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
@@ -1829,6 +2051,7 @@ class BasaraLauncher(tk.Tk):
                 auto_builder.auto_prepare(
                     app0_path,
                     out_dir,
+                    source_hint_dir=app0_path,
                     status_callback=lambda msg: self.after(0, lambda m=msg: self.update_init_status(m))
                 )
                 self.after(300, self.on_init_success)
@@ -1849,11 +2072,113 @@ class BasaraLauncher(tk.Tk):
         self.evaluate_system_readiness()
         messagebox.showerror("Setup Error", f"Failed to auto-generate boot-linked.bin:\n\n{error_msg}")
 
+    def start_repair_flow(self, launch_after=True):
+        if getattr(self, "state", None) == "BUILDING":
+            return
+
+        missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
+        if not app0 or not eboot_found:
+            for cand in [os.path.join("extracted_game", "app0"), "app0"]:
+                if os.path.isfile(os.path.join(cand, "eboot.bin")):
+                    app0 = cand
+                    eboot_found = True
+                    break
+
+        if not app0 or not eboot_found:
+            resp = messagebox.askyesno(
+                "Setup Required",
+                "Game files (eboot.bin) not found in extracted_game/app0.\n\n"
+                "Would you like to open Setup Wizard to locate your game directory?",
+                icon="question"
+            )
+            if resp:
+                self.open_setup_wizard(force=True)
+            return
+
+        self.state = "BUILDING"
+        self.canvas.config(cursor="watch")
+        self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
+        self.canvas.itemconfig(self.status_title, text="Repairing & re-linking native PS4 modules...", fill=COLOR_AMBER)
+        self.canvas.itemconfig(self.status_sub, text="Scanning .sprx modules & rebuilding boot-linked.bin...", fill=COLOR_GOLD)
+        self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
+        self.canvas.itemconfig(self.play_txt_id, text="REPAIRING...", fill="#A0A8B8")
+
+        def repair_worker():
+            try:
+                out_dir = os.path.join(os.getcwd(), "out")
+                os.makedirs(out_dir, exist_ok=True)
+
+                if not HAS_AUTO_BUILDER or auto_builder is None:
+                    raise RuntimeError("auto_builder module could not be imported!")
+
+                def status_cb(msg):
+                    self.after(0, lambda m=msg: self.update_init_status(m))
+
+                # Re-extract .sprx and re-link all modules
+                auto_builder.auto_prepare(
+                    app0,
+                    out_dir,
+                    source_hint_dir=app0,
+                    status_callback=status_cb
+                )
+
+                # Check game integrity
+                boot_linked = os.path.join(out_dir, "boot-linked.bin")
+                is_valid, msg = check_game_integrity(boot_linked)
+                if not is_valid:
+                    raise RuntimeError(f"Repair verification failed: {msg}")
+
+                self.after(300, lambda: self.on_repair_success(launch_after=launch_after))
+            except Exception as err:
+                self.after(300, lambda e=str(err): self.on_repair_failure(e))
+
+        threading.Thread(target=repair_worker, daemon=True).start()
+
+    def on_repair_success(self, launch_after=True):
+        self.evaluate_system_readiness()
+        if launch_after:
+            self.launch_game()
+        else:
+            messagebox.showinfo(
+                "Repair Complete",
+                "Game files repaired successfully!\n\n"
+                "All 7 native PS4 modules (including audio libSceNgs2 and libSceAjm) are properly linked."
+            )
+
+    def on_repair_failure(self, error_msg):
+        self.evaluate_system_readiness()
+        messagebox.showerror(
+            "Repair Error",
+            f"Failed to repair/rebuild game files:\n\n{error_msg}\n\n"
+            "Please ensure you have copied the entire PS4 game directory or provide 11.00_sys_modules.zip."
+        )
+
     def launch_game(self):
-        missing, exe, boot_bin, app0, eboot_found = verify_game_installation()
+        missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
+        link_warning = extra[0] if extra else None
         if not boot_bin:
             messagebox.showerror("Engine Warning", "Cannot launch. Missing components:\n\n" + "\n".join(missing))
             return
+
+        if link_warning:
+            do_repair = messagebox.askyesno(
+                "Audio Modules Missing",
+                f"⚠️ Game files incomplete (Audio modules missing):\n\n"
+                f"{link_warning}\n\n"
+                f"Audio will stutter or cut out because native audio modules (libSceNgs2/libSceAjm) are missing.\n\n"
+                f"Would you like to automatically repair your game files now?",
+                icon="warning"
+            )
+            if do_repair:
+                self.start_repair_flow(launch_after=True)
+                return
+            proceed = messagebox.askyesno(
+                "Launch Degraded",
+                "Do you still want to launch with degraded audio?",
+                icon="warning"
+            )
+            if not proceed:
+                return
 
         self.sync_ini()
 
@@ -1964,7 +2289,7 @@ def run_headless_prepare():
     out_dir = os.path.join(os.getcwd(), "out")
     print(f"[INFO] Building native binary from {app0} into {out_dir}...")
     try:
-        auto_builder.auto_prepare(app0, out_dir, status_callback=lambda msg: print(f"  -> {msg}"))
+        auto_builder.auto_prepare(app0, out_dir, source_hint_dir=app0, status_callback=lambda msg: print(f"  -> {msg}"))
         print("[SUCCESS] out/boot-linked.bin and metadata generated successfully!")
         return 0
     except Exception as err:

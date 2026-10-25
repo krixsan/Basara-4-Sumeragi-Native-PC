@@ -101,6 +101,8 @@ docs/
 !build_launcher.py
 !scripts/package_release.py
 !scripts/verify_release.py
+!scripts/auto_builder.py
+!scripts/link_modules.py
 !/LICENSE.txt
 !THIRD_PARTY_LICENSES.md
 !PRIVACY.md
