@@ -12,7 +12,10 @@ user/
 backup*/
 release_package/
 tools/
-scripts/
+scripts/*
+!scripts/package_release.py
+!scripts/verify_release.py
+!scripts/auto_builder.py
 relinker/
 temp_ctr/
 patches/
@@ -95,3 +98,12 @@ docs/
 !README.md
 !README.id.md
 !.gitignore
+!build_launcher.py
+!scripts/package_release.py
+!scripts/verify_release.py
+!/LICENSE.txt
+!THIRD_PARTY_LICENSES.md
+!PRIVACY.md
+!CHANGELOG.md
+!VERSION.txt
+!CHECKSUMS.txt

@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="https://microsoft.com/windows"><img src="https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Platform" /></a>
-  <a href="https://www.vulkan.org"><img src="https://img.shields.io/badge/API-Vulkan%201.3-E42528?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan API" /></a>
+  <a href="https://microsoft.com/windows"><img src="https://img.shields.io/badge/Platform-Windows%2010%201809+%20/%2011%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Platform" /></a>
+  <a href="https://www.vulkan.org"><img src="https://img.shields.io/badge/API-Vulkan%201.3+-E42528?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan API" /></a>
   <a href="https://en.wikipedia.org/wiki/X86-64"><img src="https://img.shields.io/badge/Architecture-x86__64%20Native%20Runtime-4B32C3?style=for-the-badge" alt="Architecture" /></a>
-  <a href="https://github.com/krixsan/Basara-4-Sumeragi-Native-PC"><img src="https://img.shields.io/badge/Status-Active%20Preservation-D4AF37?style=for-the-badge" alt="Status" /></a>
-  <a href="../../releases"><img src="https://img.shields.io/badge/Release-Update%202-10B981?style=for-the-badge" alt="Release" /></a>
+  <a href="https://visualstudio.microsoft.com"><img src="https://img.shields.io/badge/Dependency-VC++%202015--2022%20x64-5C2D91?style=for-the-badge" alt="VC++ Redist" /></a>
+  <a href="../../releases"><img src="https://img.shields.io/badge/Release-Update%203-10B981?style=for-the-badge" alt="Release" /></a>
 </p>
 
 <p align="center">
@@ -21,91 +21,72 @@ A high-performance native PC runtime and Vulkan presentation engine for **Sengok
 
 ---
 
-## Architecture Overview
+## Quick Start (3 Steps — Under 5 Minutes)
 
-This project provides an open-source, decoupled engine architecture designed for native binary execution without full OS virtualization overhead:
+### 1. Download
+Get the latest build from the [Releases](../../releases) tab:
+- **Installer (Recommended):** `Basara4_Sumeragi_PC_Setup_v<version>.exe` (Per-user non-admin installation, creates Start Menu & Desktop shortcuts, preserves user data on uninstall).
+- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Extract anywhere).
 
-```
-├── src/                  # Native OS & Platform Translation Layer
-│   ├── runtime.c         # Process lifecycle, dynamic symbol dispatch & linking
-│   ├── runtime_audio.c   # Multichannel ATRAC9 & PCM audio sub-engine
-│   ├── runtime_pad.c     # Multi-device gamepad routing via SDL3 / XInput & custom mapping
-│   ├── runtime_memory.c  # Direct memory mapping & virtual address space management
-│   ├── runtime_thread.c  # POSIX / Orbis threading & synchronization bridge
-│   ├── probe.c           # Memory relocation, eboot loader & dynamic byte-patching
-│   └── compat_win.c      # Windows Win32 API abstraction & high-resolution timers
-│
-├── gpu/                  # Vulkan 1.3 High-Performance Rendering Subsystem
-│   ├── shadps4/          # Graphics command processor & memory management
-│   ├── shader_recompiler # Dynamic GPU shader bytecode to SPIR-V translation
-│   └── shim/             # In-game telemetry overlay, FSR 1 / RCAS & Anisotropic filtering
-│
-├── third_party/          # LibAtrac9 (hardened), ImGui, FSR-Vulkan, Miniz
-├── packaging/            # Icons, manifests, and compilation resources
-├── launcher.py           # Studio-grade desktop GUI launcher (PIL glassmorphism)
-└── CMakeLists.txt        # Modular build configuration
-```
+### 2. Launch
+Run **`Basara4_Launcher.exe`**.
+- The built-in dependency engine verifies **Vulkan 1.3 loader**, **VC++ Redist 2015–2022 x64**, **Windows version**, and **Storage**.
+- If any required library is missing, one-click official download links are provided.
 
-- **`src/` (Native Execution Layer):** Bridges the game's x86_64 ELF binary calls directly to Windows Win32 / POSIX APIs, mapping memory, filesystem paths, threading primitives, and controller inputs with zero virtualization overhead.
-- **`gpu/` (Vulkan 1.3 Engine):** Recompiles proprietary GPU shader bytecode into high-efficiency SPIR-V shaders, driving hardware-accelerated Vulkan pipelines with low CPU overhead, FSR 1 upscaling, RCAS contrast sharpening, and 16x Anisotropic Filtering.
-- **`launcher.py` (Desktop Launcher):** Built from the ground up with single-canvas PIL alpha-composited glassmorphism, Windows 11 immersive dark mode title bar integration, segmented pill selectors, true internal FPS unlock bypass, and instant INI configuration synchronization.
+### 3. Setup & Play
+On a fresh installation, the **5-Step Setup Wizard** will guide you:
+1. Accept the fair-use legal disclaimer.
+2. Select your legally dumped `eboot.bin` (both decrypted SELF and standard ELF formats are supported).
+3. The wizard automatically links modules and creates `out/boot-linked.bin` in seconds.
+4. Click **PLAY GAME**!
 
 ---
 
-## What's New in Update 2
+## Legal Dump Notice
 
-- **True Internal MT Framework FPS Unlocker:**
-  - Automated byte-pattern scanner targeting Capcom MT Framework's internal spin-wait frame limiter.
-  - Supports 60 FPS, 90 FPS, 120 FPS, 144 FPS, 165 FPS, 240 FPS, and Unlimited without distorting game simulation clock or physics.
-- **AMD FSR 1.0 + RCAS Sharpening:**
-  - Hardware-accelerated AMD FidelityFX Super Resolution upscaling combined with Robust Contrast Adaptive Sharpening (RCAS).
-  - Produces razor-sharp visuals on 1440p and 4K displays with minimal performance impact.
-- **16x Anisotropic Filtering:**
-  - Forced high-order anisotropic texture filtering (Off, 2x, 4x, 8x, 16x) eliminating surface texture blur at oblique angles while maintaining Cascade Shadow Depth-Bias accuracy.
-- **LibAtrac9 Boundary Hardening:**
-  - Hardened memory boundary validation in ATRAC9 decoding (`band_extension.c`, `huffCodes.c`, `unpack.c`), eliminating crash vectors on damaged or truncated BGM/voice audio streams.
-- **Controller Support & Calibration Tool:**
-  - Auto-detection and loading of `user/gamepad_mapping.txt` and `gamepad_mapping.txt`.
-  - Built-in `basara4-pad-mapper.exe` calibration utility for generic DirectInput gamepads.
-- **F12 Lossless Screenshot Capture:**
-  - Capture clean in-game framebuffer screenshots directly to `user/screenshots/` in lossless PNG format via hotkey `F12`.
+> [!IMPORTANT]
+> **No copyrighted Capcom assets, disc images, binaries, or encryption keys are bundled with this software.**
+> 
+> You need to dump `eboot.bin` from your legally owned PS4. Search the PS4 homebrew community for dumping tutorials.
 
 ---
 
-## Key Features
+## System Requirements
 
-- **High Framerate Presentation:** Native 60 FPS, 90 FPS, 120 FPS, 144 FPS, 240 FPS, and Uncapped targets.
-- **Modern Display Resolutions:** Full support for 720p, 1080p, 1440p, 4K, and Ultrawide (21:9) aspect ratios.
-- **In-Game Settings Overlay:** Real-time on-the-fly configuration menu accessible via `Insert` key or `L3 + R3` gamepad shortcut.
-- **Comprehensive Gamepad Support:** Native plug-and-play compatibility with PlayStation DualSense, DualShock 4, Xbox Wireless Controllers, Nintendo Switch Pro Controllers, and generic PC controllers via SDL3.
-- **Local Multiplayer:** Built-in multi-controller routing supporting up to 4 players simultaneously on a single PC.
-
----
-
-## Quick Start for Players
-
-### System Requirements
 | Component | Minimum | Recommended |
 |---|---|---|
-| **OS** | Windows 10 (64-bit) | Windows 11 (64-bit) |
+| **OS** | Windows 10 64-bit (Build 17763 / Version 1809+) | Windows 11 64-bit |
 | **Processor** | 4-Core / 8-Thread x86_64 CPU | 6-Core / 12-Thread x86_64 CPU (Zen 3 / Intel 12th Gen+) |
 | **Memory** | 8 GB RAM | 16 GB Dual-Channel RAM |
-| **Graphics** | Vulkan 1.3 GPU (GTX 1060 6GB / RX 580) | RTX 2060 / RX 6600 or higher |
-| **Storage** | 25 GB available space | NVMe / SATA SSD |
+| **Graphics** | Vulkan 1.3 capable GPU (GTX 1060 6GB / RX 580) | RTX 2060 / RX 6600 or higher |
+| **Storage** | 500 MB free (for engine & cache) + Game assets | NVMe / SATA SSD |
+| **Runtimes** | [Vulkan Runtime 1.3+](https://vulkan.lunarg.com/sdk/home#windows) & [VC++ 2015–2022 x64](https://aka.ms/vs/17/release/vc_redist.x64.exe) | Updated GPU drivers |
 
-### Installation Steps
-1. Download **`Basara4_Sumeragi_PC_Update2.zip`** from the [Releases](../../releases) tab.
-2. Extract all contents of the ZIP package into your desired game installation folder.
-3. Place your legally dumped game assets (`app0` or `extracted_game/app0`) alongside `basara_pc.exe`.
-4. Run **`Basara4_Launcher.exe`** (or **`launcher.py`** / **`Play_Basara4.bat`**).
-   - If running for the first time, click **INITIALIZE & PLAY** to auto-generate the native runtime binary.
-   - Subsequent launches will show **PLAY GAME** immediately!
+---
+
+## Troubleshooting
+
+### 1. "Vulkan Loader (vulkan-1.dll) Missing"
+- **Cause:** Your system does not have the Khronos Vulkan loader installed.
+- **Solution:** Download and install the official runtime from [LunarG Vulkan SDK / Runtime](https://vulkan.lunarg.com/sdk/home#windows), or update your NVIDIA / AMD / Intel GPU drivers to the latest version.
+
+### 2. "Microsoft Visual C++ Redistributable Missing"
+- **Cause:** Missing MSVC 14.0 x64 runtime libraries (`vcruntime140.dll` / `msvcp140.dll`).
+- **Solution:** Download and install [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+
+### 3. Crash on Startup or Map Load
+- Check `user/logs/basara.log` and `user/crashes/` for raw crash dumps (`crash_raw_*.log`).
+- Telemetry & crash minidumps follow strict privacy-by-design standards with personal identifiers redacted (see [PRIVACY.md](PRIVACY.md)).
+
+### 4. Controller Not Recognized
+- XInput controllers (Xbox, PS4/PS5 via DS4Windows/Steam) work natively.
+- For generic DirectInput controllers, click **🎮 Gamepad** in the launcher toolbar to open `basara4-pad-mapper.exe` and generate `user/gamepad_mapping.txt`.
 
 ---
 
 ## Configuration (`basara.ini`)
 
-All preferences configured via the GUI Launcher or in-game overlay are automatically saved to `basara.ini`:
+Settings are synchronized between the graphical launcher, in-game overlay (`Insert` or `L3+R3`), and `basara.ini`:
 
 | Key | Default | Description |
 |---|---|---|
@@ -114,43 +95,59 @@ All preferences configured via the GUI Launcher or in-game overlay are automatic
 | `fullscreen` | `1` | `1` for borderless/exclusive fullscreen, `0` for windowed mode |
 | `fps_limit` | `144` | Target framerate limit (`60`, `90`, `120`, `144`, `240`, `0` for unlimited) |
 | `anisotropy` | `16` | Forced Anisotropic Filtering level (`0`, `2`, `4`, `8`, `16`) |
-| `fsr1` | `1` | `1` to enable AMD FSR 1.0 edge-preserving spatial upscaling |
+| `fsr1` | `1` | `1` to enable AMD FSR 1.0 spatial upscaling |
 | `rcas` | `1` | `1` to enable Robust Contrast Adaptive Sharpening |
-| `rcas_strength` | `75` | RCAS sharpening attenuation percentage (`0` to `100`) |
-| `skip_intro` | `0` | `1` to bypass opening logo/movie directly to title menu |
-| `show_fps` | `1` | `1` to display on-screen FPS and performance metrics overlay |
-
----
-
-## Hotkeys & In-Game Controls
-
-| Action | Keyboard Hotkey | Gamepad Shortcut |
-|---|---|---|
-| **Toggle Settings Overlay** | `Insert` | `L3 + R3` (Click both sticks) |
-| **Capture Screenshot (PNG)** | `F12` | — |
-| **Pause Menu** | `Esc` | Touchpad / `View` / `Back` |
+| `process_priority` | `above_normal` | Windows CPU scheduling priority (`normal`, `above_normal`, `high`) |
+| `telemetry_upload` | `ask` | Crash reporter behavior (`ask`, `never`, `always`) |
+| `first_run_done` | `0` | Setup wizard completion state flag |
+| `legal_acknowledged`| `0` | Fair-use legal acknowledgement flag |
 
 ---
 
 ## Building from Source
 
-To compile the runtime and Vulkan renderer from source on Windows:
+### Prerequisites
+- Windows 10 1809+ / 11 x64
+- [MSYS2](https://www.msys2.org/) with `CLANG64` environment
+- Python 3.10+ (with `pillow` and `pyinstaller`)
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (optional, for installer builds)
 
-```powershell
-# Prerequisites: MSYS2 CLANG64 or Visual Studio 2022 with Clang/LLVM, CMake 3.24+, Vulkan SDK 1.3+
-git clone https://github.com/krixsan/Basara-4-Sumeragi-Native-PC.git
-cd Basara-4-Sumeragi-Native-PC
+### 1. Compile Native Engine (`basara_pc.exe`)
+```bash
+# In MSYS2 CLANG64 shell:
+pacman -S --needed git ninja mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-cmake \
+  mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader \
+  mingw-w64-clang-x86_64-sdl3 mingw-w64-clang-x86_64-ffmpeg mingw-w64-clang-x86_64-zydis
 
-# Build with MSYS2 CLANG64 environment
 ./win_build.sh
+```
+
+### 2. Build Graphical Launcher
+```powershell
+python -m pip install pillow pyinstaller
+python build_launcher.py
+```
+
+### 3. Package Portable Release & Installer
+```powershell
+# Create portable ZIP & SHA256 checksums
+python scripts/package_release.py --version 1.0-update3
+
+# Verify package integrity
+python scripts/verify_release.py
 ```
 
 ---
 
-## Disclaimer & Legal Notice
+## Open Source Licenses & Compliance
 
-This project is an independent, non-commercial fan-developed compatibility and preservation initiative.
-- **Sengoku Basara (戦国BASARA)** and **Sengoku Basara 4 Sumeragi (戦国BASARA4 皇)** are registered trademarks of **CAPCOM Co., Ltd.**
-- This repository and its release binaries **do not distribute any copyrighted game assets, audio tracks, cinematic video streams, textures, or proprietary game binaries**.
-- Users must dump and provide their own legally obtained copy of the original PlayStation 4 game disc or digital purchase.
-- All code contributed to this repository is licensed for research, interoperability, and personal preservation purposes.
+- **Project License:** [MIT License](LICENSE.txt)
+- **Third-Party Components:** [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) (covers shadps4 GPL-2.0, LibAtrac9 MIT, SDL3 Zlib, Vulkan SDK Apache-2.0, AMD FidelityFX MIT, miniz MIT, Sirit BSD-2, xbyak BSD-3, Boost BSL-1.0).
+- **Privacy & Telemetry Policy:** [PRIVACY.md](PRIVACY.md)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
+
+---
+
+## Disclaimer
+
+*Sengoku Basara (戦国BASARA)* and *Sengoku Basara 4 Sumeragi (戦国BASARA4 皇)* are registered trademarks of **CAPCOM CO., LTD.** This project is an independent open-source preservation initiative. No copyright infringement is intended.
