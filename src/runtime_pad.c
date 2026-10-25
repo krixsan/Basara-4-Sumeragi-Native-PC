@@ -73,10 +73,16 @@ _Static_assert(sizeof(ControllerInfo)==28,"OrbisPadControllerInformation layout"
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static int initialized, opened, sdl_ready;
 static SDL_Gamepad *gamepad;
-/* SacredFire: ports 2..4 for split screen: the gamepad named in bbport.ini (port.N=), opened while
- * connected; the game sees user N logged in while the port has its gamepad. Port 1 is `gamepad`. */
+/* SacredFire: ports 2..4 for split screen: the gamepad named in basara.ini (port.N=), opened while
+ * connected; the game sees user N logged in while the port has its gamepad. Port 1 is `gamepad`.
+ * v1.8 auto-join: a port without a port.N= binding claims the first connected gamepad no one
+ * else holds as soon as input is seen on it (guests join by pressing buttons); the claim is what
+ * reports user N as logged in, so it must happen before the game opens that user's pad. The pad
+ * is released when the port closes or the pad is unplugged. Pads known to be virtual (vJoy and
+ * similar) are ignored. Set BB_PAD_DEBUG=0 to silence the [PAD_DEBUG] stderr trace. */
 #define PORTS 4
-typedef struct { char want[64]; SDL_Gamepad *pad; int opened, present; } Port;
+typedef struct { char want[64]; SDL_Gamepad *pad; int opened, present;
+                 int joining; uint64_t last_try; } Port;
 static Port ports[PORTS]; /* ports[0].want overrides BB_GAMEPAD for port 1 */
 static unsigned pad_rescan_attempts; /* misses in a row looking for a bound controller (current_gamepad) */
 static struct timespec config_mtime; static uint64_t config_checked;
@@ -108,7 +114,8 @@ static void load_ports(void) {
         if (strcmp(fresh[p],ports[p].want)) {
             pad_rescan_attempts=0; /* a new binding is looked for afresh */
             snprintf(ports[p].want,sizeof ports[p].want,"%.63s",fresh[p]);
-            if (p && ports[p].pad) { SDL_CloseGamepad(ports[p].pad); ports[p].pad=NULL; }
+            if (p) { ports[p].joining=0;
+                if (ports[p].pad) { SDL_CloseGamepad(ports[p].pad); ports[p].pad=NULL; } }
             if (p) printf("Runtime: controller port %d -> %s\n",p+1,fresh[p][0] ? fresh[p] : "(none)");
         }
     }
@@ -132,10 +139,56 @@ static void refresh_ports(uint64_t now) {
 }
 /* 1 when the gamepad id is claimed by a port other than `except` (ports 2..4 with a name). */
 static int is_preferred(SDL_JoystickID id, const char *want);
+static uint64_t now_us(void);
+static int gamepad_active(SDL_Gamepad *g);
+/* SacredFire: the SDL device id is already held by port 1 or another port's pad. */
 static int claimed_by_other_port(SDL_JoystickID id, int except) {
     for (int p=1;p<PORTS;++p) if (p!=except && ports[p].want[0] && is_preferred(id,ports[p].want)) return 1;
     return 0;
 }
+static int claimed_pad(SDL_JoystickID id, int except) {
+    if (gamepad && SDL_GetGamepadID(gamepad)==id) return 1;
+    for (int p=1;p<PORTS;++p) if (p!=except && ports[p].pad && SDL_GetGamepadID(ports[p].pad)==id) return 1;
+    return 0;
+}
+/* Sticks held by a port (port 1 included), for the scan trace. */
+static int claimed_pad_count(void) {
+    int count=gamepad ? 1 : 0;
+    for (int p=1;p<PORTS;++p) if (ports[p].pad) ++count;
+    return count;
+}
+/* [PAD_DEBUG] trace on stderr, next to the game's console output. On by default so a "Player 2
+ * does not join" report shows the enumerated instance ids; BB_PAD_DEBUG=0 turns it off. */
+static int pad_debug=-1;
+static int pad_debug_on(void) {
+    if (pad_debug<0) {
+        const char *v=getenv("BB_PAD_DEBUG");
+        pad_debug=!(v && *v=='0');
+    }
+    return pad_debug;
+}
+#define PAD_DEBUG(...) do { if (pad_debug_on()) { fprintf(stderr,"[PAD_DEBUG] " __VA_ARGS__); fflush(stderr); } } while (0)
+/* Software controllers (vJoy, ViGEm/XOutput and the like) show up as real HID gamepads; they
+ * never carry a player's input and used to be claimed by a port. SDL's own virtual joysticks
+ * (the pad tests) are not filtered: their names do not match these markers. */
+static int pad_name_is_virtual(const char *name) {
+    static const char *const markers[]={"vjoy","virtual","vigem","xoutput"};
+    if (!name) return 0;
+    for (size_t i=0;i<sizeof(markers)/sizeof(*markers);++i) if (strcasestr(name,markers[i])) return 1;
+    return 0;
+}
+/* The device name; SDL_GetGamepadNameForID can report another virtual pad's mapping name, while
+ * the joystick name is per instance. */
+static const char *pad_name(SDL_JoystickID id) {
+    const char *name=SDL_GetJoystickNameForID(id);
+    if (!name || !*name) name=SDL_GetGamepadNameForID(id);
+    return name && *name ? name : "(unnamed)";
+}
+static const char *pad_name_of(SDL_Gamepad *g) { return pad_name(SDL_GetGamepadID(g)); }
+static int pad_id_is_usable(SDL_JoystickID id) {
+    return !pad_name_is_virtual(SDL_GetJoystickNameForID(id));
+}
+
 /* Per-port stick calibration (the functions follow the axis helpers below). */
 typedef struct PadCal {
     int have_center, started, quiet_count;
@@ -146,21 +199,79 @@ typedef struct PadCal {
 } PadCal;
 static PadCal cals[PORTS];             /* cals[0]: port 1 (`gamepad`), cals[p]: ports[p].pad */
 static void cal_reset(PadCal *c);
-/* The gamepad of port p (1..3), opened when its named controller is connected; NULL otherwise. */
+/* The gamepad of port p (1..3): its named controller while connected (v1.8, else the port
+ * keeps none), or the first idle gamepad a player pressed a button on (auto-join). */
 static SDL_Gamepad *port_gamepad(int p) {
     Port *port=&ports[p];
-    if (!port->want[0]) { if (port->pad) { SDL_CloseGamepad(port->pad); port->pad=NULL; } return NULL; }
-    if (port->pad && !SDL_GamepadConnected(port->pad)) { SDL_CloseGamepad(port->pad); port->pad=NULL; }
+    if (port->pad && !SDL_GamepadConnected(port->pad)) {
+        SDL_CloseGamepad(port->pad); port->pad=NULL; port->joining=0;
+    }
     if (port->pad) return port->pad;
+    const uint64_t now=now_us();
+    if (now-port->last_try<250000) return NULL;
+    port->last_try=now;
+
     int count=0;
     SDL_JoystickID *ids=SDL_GetGamepads(&count);
-    for (int i=0; ids && i<count && !port->pad; ++i) {
-        if (!is_preferred(ids[i],port->want)) continue;
-        if (gamepad && SDL_GetGamepadID(gamepad)==ids[i]) continue; /* port 1 has it */
-        if (claimed_by_other_port(ids[i],p)) continue;
-        port->pad=SDL_OpenGamepad(ids[i]);
-        if (port->pad) cal_reset(&cals[p]);
-        if (port->pad) printf("Runtime: controller port %d: %s connected\n",p+1,SDL_GetGamepadName(port->pad));
+    /* Every scan is walked by SDL's instance id (SDL_JoystickID), never by a 0,1,2,3 index:
+     * the index changes when pads connect or disconnect, the instance id does not. */
+    /* Scan trace: only while the gamepad count says at least one pad is still free, so a normal
+     * one-controller session stays quiet. The summary is what shows a second pad that was not
+     * claimed (wrong name filtered as virtual, not sending input, or held by another port). */
+    int free_pads=0;
+    for (int i=0; ids && i<count; ++i)
+        if (!claimed_pad(ids[i],p) && pad_id_is_usable(ids[i])) ++free_pads;
+    static uint64_t last_scan_log;
+    if (free_pads && pad_debug_on() && now-last_scan_log>=2000000) {
+        last_scan_log=now;
+        PAD_DEBUG("Scanning %d gamepads for Player %d. Claimed slots: %d\n",count,p+1,claimed_pad_count());
+        for (int i=0; ids && i<count; ++i) {
+            const char *state=claimed_pad(ids[i],p) ? "claimed"
+                            : !pad_id_is_usable(ids[i]) ? "virtual, ignored" : "available";
+            PAD_DEBUG("  instance %d \"%s\": %s\n",(int)ids[i],pad_name(ids[i]),state);
+        }
+    }
+
+    if (port->want[0]) { /* a basara.ini port.N= binding pins this user's controller */
+        for (int i=0; ids && i<count && !port->pad; ++i) {
+            if (!pad_id_is_usable(ids[i])) continue;
+            if (!is_preferred(ids[i],port->want)) continue;
+            if (gamepad && SDL_GetGamepadID(gamepad)==ids[i]) continue; /* port 1 has it */
+            if (claimed_by_other_port(ids[i],p)) continue;
+            port->pad=SDL_OpenGamepad(ids[i]);
+            if (!port->pad) {
+                PAD_DEBUG("Could not open instance %d \"%s\": %s\n",(int)ids[i],
+                          pad_name(ids[i]),
+                          SDL_GetError());
+                continue;
+            }
+            cal_reset(&cals[p]);
+            PAD_DEBUG("Opened pad: %s (Instance ID: %d)\n",pad_name_of(port->pad),(int)ids[i]);
+            printf("Runtime: controller port %d: %s connected\n",p+1,pad_name_of(port->pad));
+        }
+        SDL_free(ids);
+        return port->pad;
+    }
+
+    /* v1.8 auto-join: every 250 ms, claim the first connected gamepad no one else holds that
+     * has input right now, so the players pick their pads by pressing buttons. This runs even
+     * before the game opens user p+1: the claim itself is what makes the port report a user
+     * login, and the game opens the pad once it sees that login. Gating this on port->opened
+     * was a deadlock (the game waited for user 2, user 2 waited for the game to open it). */
+    for (int i=0; ids && i<count; ++i) {
+        if (claimed_pad(ids[i],p)) continue;
+        if (!pad_id_is_usable(ids[i])) continue;
+        SDL_Gamepad *probe=SDL_OpenGamepad(ids[i]);
+        if (!probe) continue;
+        if (gamepad_active(probe)) {
+            port->pad=probe; port->joining=1;
+            cal_reset(&cals[p]); /* a newly joined pad has its own neutral */
+            PAD_DEBUG("Opened pad: %s (Instance ID: %d)\n",pad_name_of(port->pad),(int)ids[i]);
+            printf("Runtime: controller port %d: %s auto-joined (Player %d)\n",
+                   p+1,pad_name_of(port->pad),p+1);
+            break;
+        }
+        SDL_CloseGamepad(probe);
     }
     SDL_free(ids);
     return port->pad;
@@ -337,7 +448,7 @@ static const char *preferred_gamepad(void) {
 static int is_preferred(SDL_JoystickID id, const char *want) {
     char guid[33];
     SDL_GUIDToString(SDL_GetGamepadGUIDForID(id),guid,sizeof guid);
-    const char *name=SDL_GetGamepadNameForID(id);
+    const char *name=pad_name(id);
     return !strcasecmp(guid,want) || (name && strcasestr(name,want));
 }
 /* Any button, trigger or stick input on a gamepad right now. */
@@ -390,37 +501,44 @@ static SDL_Gamepad *current_gamepad(void) {
     const int rescan_due=now-last_reinit>5000000 && attempts<PAD_RESCAN_ATTEMPTS;
     if (!gamepad || requested || (port_missing && rescan_due) || (want && !on_preferred && now-last_scan>1000000)) {
         last_scan=now;
-        int count=0, pick=-1;
+        int count=0;
+        SDL_JoystickID pick=0; /* SDL instance id, 0: none (instance ids are never 0) */
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
-        for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want) && !claimed_by_other_port(ids[i],0)) pick=i;
-        if (requested || (((want ? pick<0 : count==0) || port_missing) && rescan_due)) { /* the plain scan found nothing usable */
+        for (int i=0; want && ids && i<count && !pick; ++i)
+            if (pad_id_is_usable(ids[i]) && is_preferred(ids[i],want) &&
+                !claimed_by_other_port(ids[i],0) && !claimed_pad(ids[i],0)) pick=ids[i];
+        if (requested || (((want ? !pick : count==0) || port_missing) && rescan_due)) { /* the plain scan found nothing usable */
             last_reinit=now;
             /* Never call SDL_QuitSubSystem during active gameplay to prevent thread collision with SDL_PollEvent */
             if (!ids) ids=SDL_GetGamepads(&count);
             if (requested) printf("Runtime: controllers re-enumerated on request: %d found\n",count);
-            else if (reinits++<3) printf("Runtime: %s; devices re-enumerated: %d found\n",want && pick<0 ? "chosen gamepad not seen" : "no gamepad or a port's controller missing",count);
-            for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want)) pick=i;
+            else if (reinits++<3) printf("Runtime: %s; devices re-enumerated: %d found\n",want && !pick ? "chosen gamepad not seen" : "no gamepad or a port's controller missing",count);
+            for (int i=0; want && ids && i<count && !pick; ++i)
+                if (pad_id_is_usable(ids[i]) && is_preferred(ids[i],want) &&
+                    !claimed_by_other_port(ids[i],0) && !claimed_pad(ids[i],0)) pick=ids[i];
             /* Found what was missing: attempts start over; else one more miss, the last one reported. */
-            int still_missing=(want ? pick<0 : count==0);
+            int still_missing=(want ? !pick : count==0);
             for (int p=1;p<PORTS && !still_missing;++p) if (ports[p].want[0] && !ports[p].pad) {
                 still_missing=1;
-                for (int i=0; ids && i<count; ++i) if (is_preferred(ids[i],ports[p].want)) still_missing=0;
+                for (int i=0; ids && i<count; ++i) if (pad_id_is_usable(ids[i]) && is_preferred(ids[i],ports[p].want)) still_missing=0;
             }
             if (!still_missing) attempts=0;
             else if (++attempts==PAD_RESCAN_ATTEMPTS)
                 printf("Runtime: a bound controller was not found in %d rescans: treated as disconnected (the in-game menu's Rescan controllers tries again)\n",PAD_RESCAN_ATTEMPTS);
         }
-        if (pick<0 && !gamepad && ids) for (int i=0;i<count && pick<0;++i) if (!claimed_by_other_port(ids[i],0)) pick=i;
-        if (pick>=0 && (!gamepad || SDL_GetGamepadID(gamepad)!=ids[pick])) {
+        if (!pick && !gamepad && ids) for (int i=0;i<count && !pick;++i)
+            if (pad_id_is_usable(ids[i]) && !claimed_by_other_port(ids[i],0) && !claimed_pad(ids[i],0)) pick=ids[i];
+        if (pick && (!gamepad || SDL_GetGamepadID(gamepad)!=pick)) {
             if (gamepad) SDL_CloseGamepad(gamepad);
-            gamepad=SDL_OpenGamepad(ids[pick]);
+            gamepad=SDL_OpenGamepad(pick);
             cal_reset(&cals[0]); /* a new pad has its own neutral */
-            on_preferred=want && gamepad && is_preferred(ids[pick],want);
+            on_preferred=want && gamepad && is_preferred(pick,want);
             if (gamepad) {
                 ++connected_count;
-                LOG_INFO("pad", "Gamepad connected: %s%s", SDL_GetGamepadName(gamepad),
+                PAD_DEBUG("Opened pad: %s (Instance ID: %d)\n",pad_name_of(gamepad),(int)pick);
+                LOG_INFO("pad", "Gamepad connected: %s%s", pad_name_of(gamepad),
                          !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
-                printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
+                printf("Runtime: gamepad connected: %s%s\n",pad_name_of(gamepad),
                        !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
             }
         }
@@ -440,8 +558,9 @@ static SDL_Gamepad *current_gamepad(void) {
             }
         }
         for (int i=0; ids && i<count; ++i) {
+            if (!pad_id_is_usable(ids[i])) continue;
             if (gamepad && SDL_GetGamepadID(gamepad)==ids[i]) continue;
-            if (claimed_by_other_port(ids[i],0)) continue;
+            if (claimed_by_other_port(ids[i],0) || claimed_pad(ids[i],0)) continue;
             int known=0;
             for (int j=0;j<other_count;++j) if (others[j] && SDL_GetGamepadID(others[j])==ids[i]) known=1;
             if (!known) {
@@ -456,8 +575,9 @@ static SDL_Gamepad *current_gamepad(void) {
             for (int j=0;j<other_count;++j) {
                 if (!others[j] || !gamepad_active(others[j])) continue;
                 gamepad=others[j]; others[j]=NULL; on_preferred=1;
-                LOG_INFO("pad", "Gamepad switched to %s (it was used)", SDL_GetGamepadName(gamepad));
-                printf("Runtime: gamepad switched to %s (it was used)\n",SDL_GetGamepadName(gamepad));
+                PAD_DEBUG("Opened pad: %s (Instance ID: %d)\n",pad_name_of(gamepad),(int)SDL_GetGamepadID(gamepad));
+                LOG_INFO("pad", "Gamepad switched to %s (it was used)", pad_name_of(gamepad));
+                printf("Runtime: gamepad switched to %s (it was used)\n",pad_name_of(gamepad));
                 break;
             }
         }
@@ -829,14 +949,18 @@ static ABI int32_t pad_open(int32_t user, int32_t type, int32_t index, const voi
     if (type!=0 && type!=2) return ERR_INVALID_ARG; /* standard / special port */
     if (index) return ERR_INVALID_ARG;
     pthread_mutex_lock(&lock);
-    int already, assigned=1;
+    int already;
     if (user==1) { already=opened; opened=1; }
-    else { assigned=ports[user-1].want[0]!=0; already=ports[user-1].opened; if (assigned) ports[user-1].opened=1; }
+    else { /* v1.8: every user 2..4 the game opens joins automatically (see port_gamepad);
+            * a basara.ini port.N= binding still pins that user's controller explicitly. */
+        already=ports[user-1].opened; ports[user-1].opened=1;
+        ports[user-1].last_try=0; /* scan at once, not after the 250 ms throttle */ }
     pthread_mutex_unlock(&lock);
-    if (!assigned) return ERR_INVALID_ARG;
     if (already) return ERR_ALREADY_OPENED;
     LOG_INFO("pad", "scePadOpen called (user=%d, type=%d)", user, type);
-    printf("Runtime: pad opened for user %d (%s)\n",user,user==1 ? "SDL gamepad or keyboard" : ports[user-1].want);
+    if (user==1) printf("Runtime: pad opened for user 1 (SDL gamepad or keyboard)\n");
+    else printf("Runtime: pad opened for user %d (%s)\n",user,
+                ports[user-1].want[0] ? "the bound controller" : "auto-join: a pressed controller is claimed");
     return user;
 }
 static ABI int32_t pad_close(int32_t handle) {
@@ -900,4 +1024,4 @@ static const RuntimeExport exports[]={
     {"scePadSetLightBar",pad_set_light_bar}, {"scePadResetLightBar",pad_ok_handle},
 };
 uintptr_t runtime_pad_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-void runtime_pad_report(void) { printf("Runtime: pad reads=%zu, gamepad=%s\n",reads,gamepad ? SDL_GetGamepadName(gamepad) : "none"); }
+void runtime_pad_report(void) { printf("Runtime: pad reads=%zu, gamepad=%s\n",reads,gamepad ? pad_name_of(gamepad) : "none"); }

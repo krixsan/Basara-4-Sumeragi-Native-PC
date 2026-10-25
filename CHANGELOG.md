@@ -1,5 +1,16 @@
 # Changelog
 
+## [v1.8] - 2026-10-25 (Update 4: 2-Player Local Co-op)
+
+### Added
+- Local 2-Player Mode (Co-op) support. Up to 4 controllers.
+- "Press to Join" auto-join system for controllers (solves virtual/ghost controller issues).
+- Instance ID-based SDL3 controller routing.
+
+### Fixed
+- Controller 2 input hijacking Player 1.
+- Controller detection issues on Windows with multiple XInput devices.
+
 ## [v1.5] - 2026-10-25
 
 ### Added

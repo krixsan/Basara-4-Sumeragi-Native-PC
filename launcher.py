@@ -2,7 +2,7 @@
 """
 Sengoku Basara 4 Sumeragi — PC Native Port
 Studio-Grade AAA Graphical Launcher & Configuration Engine
-v1.5 Release — Priority Tuning, Crash Reporter, 100 Runtime DLLs & Setup Wizard
+v1.8 Release — Priority Tuning, Crash Reporter, 100 Runtime DLLs & Setup Wizard
 """
 
 import os
@@ -1102,7 +1102,7 @@ class FirstRunWizard(tk.Toplevel):
 class BasaraLauncher(tk.Tk):
     def __init__(self, dep_status=None):
         super().__init__()
-        self.title("Sengoku Basara 4 Sumeragi — PC Native Port (v1.5)")
+        self.title("Sengoku Basara 4 Sumeragi — PC Native Port (v1.8)")
         self.geometry(f"{WIDTH}x{HEIGHT}")
         self.resizable(False, False)
         self.configure(bg=COLOR_BG_DARK)
@@ -1375,7 +1375,7 @@ class BasaraLauncher(tk.Tk):
         # Badge
         self.canvas.create_text(
             text_x, 26,
-            text="VULKAN 1.3 NATIVE PORT • v1.5",
+            text="VULKAN 1.3 NATIVE PORT • v1.8",
             font=(FONT_SUBTITLE, 8, "bold"),
             fill=COLOR_GOLD,
             anchor="nw"
@@ -2399,7 +2399,7 @@ def check_pending_crash_consent():
         pkg_path = os.path.join(pending_dir, f"crash_package_{ts}.zip")
 
         manifest = {
-            "version": "v1.5",
+            "version": "v1.8",
             "timestamp": ts,
             "platform": sys.platform,
             "has_minidump": bool(newest_dmp)
