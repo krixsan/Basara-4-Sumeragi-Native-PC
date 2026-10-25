@@ -23,9 +23,17 @@ def get_git_version():
         return "1.0-update3"
 
 def generate_changelog(version):
-    """Generates CHANGELOG.md grouped by conventional commit type from git log."""
+    """Generates CHANGELOG.md grouped by conventional commit type from git log if not already curated."""
     root = Path(__file__).resolve().parent.parent
     changelog_path = root / "CHANGELOG.md"
+    if changelog_path.is_file():
+        try:
+            content = changelog_path.read_text(encoding="utf-8")
+            if f"## [v{version}]" in content:
+                print(f"Preserving existing curated CHANGELOG.md for v{version}.")
+                return
+        except Exception:
+            pass
     try:
         res = subprocess.run(["git", "log", "--pretty=format:%s", "-n", "40"], capture_output=True, text=True, check=True)
         commits = res.stdout.strip().splitlines()
