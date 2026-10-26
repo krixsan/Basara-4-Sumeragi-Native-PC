@@ -124,41 +124,6 @@ Semua opsi tersinkronisasi otomatis antara GUI Launcher, menu in-game (`Insert` 
 
 ---
 
-## Membangun dari Kode Sumber (Building from Source)
-
-### Kebutuhan
-- Windows 10 1809+ / 11 x64
-- Lingkungan [MSYS2](https://www.msys2.org/) dengan `CLANG64`
-- Python 3.10+ (dengan modul `pillow` dan `pyinstaller`)
-- [Inno Setup 6](https://jrsoftware.org/isdl.php) (opsional, untuk membuat setup installer)
-
-### 1. Kompilasi Engine Utama (`basara_pc.exe`)
-```bash
-# Buka shell MSYS2 CLANG64:
-pacman -S --needed git ninja mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-cmake \
-  mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader \
-  mingw-w64-clang-x86_64-sdl3 mingw-w64-clang-x86_64-ffmpeg mingw-w64-clang-x86_64-zydis
-
-./win_build.sh
-```
-
-### 2. Kompilasi GUI Launcher
-```powershell
-python -m pip install pillow pyinstaller
-python build_launcher.py
-```
-
-### 3. Pembuatan Paket Rilis & Verifikasi
-```powershell
-# Buat arsip ZIP portabel & checksums SHA256
-python scripts/package_release.py --version 1.8
-
-# Verifikasi integritas paket rilis
-python scripts/verify_release.py
-```
-
----
-
 ## Lisensi Perangkat Lunak & Legalitas
 
 - **Lisensi Proyek:** [MIT License](LICENSE.txt)

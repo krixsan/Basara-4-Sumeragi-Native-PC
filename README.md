@@ -124,41 +124,6 @@ Settings are synchronized between the graphical launcher, in-game overlay (`Inse
 
 ---
 
-## Building from Source
-
-### Prerequisites
-- Windows 10 1809+ / 11 x64
-- [MSYS2](https://www.msys2.org/) with `CLANG64` environment
-- Python 3.10+ (with `pillow` and `pyinstaller`)
-- [Inno Setup 6](https://jrsoftware.org/isdl.php) (optional, for installer builds)
-
-### 1. Compile Native Engine (`basara_pc.exe`)
-```bash
-# In MSYS2 CLANG64 shell:
-pacman -S --needed git ninja mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-cmake \
-  mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader \
-  mingw-w64-clang-x86_64-sdl3 mingw-w64-clang-x86_64-ffmpeg mingw-w64-clang-x86_64-zydis
-
-./win_build.sh
-```
-
-### 2. Build Graphical Launcher
-```powershell
-python -m pip install pillow pyinstaller
-python build_launcher.py
-```
-
-### 3. Package Portable Release & Installer
-```powershell
-# Create portable ZIP & SHA256 checksums
-python scripts/package_release.py --version 1.8
-
-# Verify package integrity
-python scripts/verify_release.py
-```
-
----
-
 ## Open Source Licenses & Compliance
 
 - **Project License:** [MIT License](LICENSE.txt)
