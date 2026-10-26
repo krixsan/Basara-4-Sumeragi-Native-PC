@@ -1,5 +1,9 @@
 # Sengoku Basara 4 Sumeragi — PC Native Port (`basara_pc`)
 
+> ⚠️ **BARU DI SINI?** Baca [Panduan Instalasi (INSTALL.md)](./INSTALL.md) dulu agar tidak gagal paham soal file `eboot.bin` dan `sce_module`!
+>
+> **Penting:** pilih **folder game PS4 lengkap** (`eboot.bin` + `sce_module` + `sce_sys` + data game), bukan hanya file `eboot.bin`.
+
 <p align="center">
   <img src="packaging/windows/icons/basara4.ico" alt="Logo Sengoku Basara 4" width="128" height="128" />
 </p>
@@ -9,7 +13,7 @@
   <a href="https://www.vulkan.org"><img src="https://img.shields.io/badge/API-Vulkan%201.3+-E42528?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan API" /></a>
   <a href="https://en.wikipedia.org/wiki/X86-64"><img src="https://img.shields.io/badge/Arsitektur-x86__64%20Native%20Runtime-4B32C3?style=for-the-badge" alt="Arsitektur" /></a>
   <a href="https://visualstudio.microsoft.com"><img src="https://img.shields.io/badge/Dependensi-VC++%202015--2022%20x64-5C2D91?style=for-the-badge" alt="VC++ Redist" /></a>
-  <a href="../../releases"><img src="https://img.shields.io/badge/Rilis-Update%203-10B981?style=for-the-badge" alt="Rilis" /></a>
+  <a href="../../releases"><img src="https://img.shields.io/badge/Rilis-v1.8-10B981?style=for-the-badge" alt="Rilis" /></a>
 </p>
 
 <p align="center">
@@ -21,24 +25,34 @@ Runtime PC native berkinerja tinggi dan engine grafis Vulkan untuk **Sengoku Bas
 
 ---
 
-## Quick Start (3 Langkah — Kurang dari 5 Menit)
+## Quick Start (5 Langkah — Kurang dari 10 Menit)
 
-### 1. Unduh (Download)
-Dapatkan paket rilis terbaru dari tab [Releases](../../releases):
+### 1. Unduh & Ekstrak
+Dapatkan **v1.8 atau lebih baru** dari tab [Releases](../../releases):
 - **Installer (Direkomendasikan):** `Basara4_Sumeragi_PC_Setup_v<version>.exe` (Pemasangan per-user tanpa hak administrator, membuat pintasan Start Menu & Desktop, data user tetap aman saat uninstall).
-- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Ekstrak ke folder mana saja).
+- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Ekstrak ke folder biasa seperti `D:\Games\Basara4_Sumeragi_PC`, jangan di dalam ZIP dan jangan di `Program Files`).
 
-### 2. Jalankan Launcher
+### 2. Buka Launcher
 Buka **`Basara4_Launcher.exe`**.
 - Engine otomatis mengecek **Vulkan 1.3 loader**, **VC++ Redist 2015–2022 x64**, **Versi Windows**, dan **Kapasitas Penyimpanan**.
 - Jika dependensi belum terpasang, tombol unduh resmi langsung disediakan dalam 1 klik.
 
-### 3. Setup Wizard & Mainkan
-Pada pemasangan baru, **Wizard 5 Langkah** akan muncul secara otomatis:
-1. Konfirmasi persetujuan legal fair-use.
-2. Pilih file `eboot.bin` hasil dump legal (format SELF terdekripsi dan ELF standar didukung penuh).
-3. Wizard akan melakukan linking modul dan membangun `out/boot-linked.bin` dalam hitungan detik.
-4. Klik **PLAY GAME**!
+### 3. Klik Setup Wizard
+Buka **Wizard 5 Langkah** (ikon tongkat sihir ⚡), baca peringatan fair-use, lalu centang persetujuan legal.
+
+### 4. Pilih FOLDER Game PS4 (Bukan `eboot.bin`)
+**Ini langkah yang paling sering salah.** Pilih folder yang **langsung berisi**:
+- `eboot.bin`
+- `sce_module` (modul audio/sistem — **wajib**)
+- `sce_sys` (`param.sfo`, icon)
+- `nativePS4` (atau `data`) — aset game
+
+**Jangan** memilih file `eboot.bin` saja. Wizard akan menolak folder tanpa `sce_module` karena itulah penyebab suara kresek dan crash.
+
+### 5. Tunggu Auto-Build, lalu PLAY
+Wizard akan melakukan linking modul dan membuat `out/boot-linked.bin` dalam 15–30 detik. Setelah muncul **Setup Completed**, klik **⚔️ Play Now** (atau **Back to Launcher** → **PLAY GAME**).
+
+> 📖 Butuh contoh folder dan solusi masalah? Baca panduan lengkap **[Panduan Instalasi (INSTALL.md)](./INSTALL.md)**.
 
 ---
 
@@ -47,7 +61,7 @@ Pada pemasangan baru, **Wizard 5 Langkah** akan muncul secara otomatis:
 > [!IMPORTANT]
 > **Tidak ada aset berhak cipta Capcom, citra disc (ISO/dump), file biner game, atau kunci enkripsi yang disertakan dalam perangkat lunak ini.**
 > 
-> You need to dump `eboot.bin` from your legally owned PS4. Search PS4 homebrew community for dumping tutorials.
+> Kamu wajib melakukan dump **seluruh folder game** dari PS4 milikmu sendiri: `eboot.bin`, `sce_module`, `sce_sys`, dan data game (`nativePS4` atau `data`). Kalau hanya mengambil `eboot.bin`, modul audio akan hilang, suara kresek, atau game crash. Cari tutorial dumping di komunitas homebrew PS4.
 
 ---
 
@@ -74,11 +88,16 @@ Pada pemasangan baru, **Wizard 5 Langkah** akan muncul secara otomatis:
 - **Penyebab:** Library runtime MSVC 14.0 x64 belum terpasang di Windows (`vcruntime140.dll` / `msvcp140.dll`).
 - **Solusi:** Pasang [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
-### 3. Game Crash saat Mulai atau Masuk Stage
+### 3. Suara Kresek / Putus-Putus atau `sce_module` Hilang
+- **Penyebab:** folder game yang dipilih tidak memiliki `sce_module`, sehingga modul audio native seperti `libSceNgs2.sprx` dan `libSceAjm.sprx` tidak ikut ter-link.
+- **Solusi:** Klik **🔧 REPAIR & PLAY** di launcher, lalu pilih **folder game PS4 lengkap** (bukan `eboot.bin`). Lihat [INSTALL.md](INSTALL.md#-troubleshooting-solusi-masalah).
+
+### 4. Game Crash saat Mulai atau Masuk Stage
 - Periksa file log di `user/logs/basara.log` dan crash dump di `user/crashes/` (`crash_raw_*.log`).
 - Telemetri diagnostik bersifat aman (privasi terjamin, identitas pribadi seperti username dan IP lokal disensor otomatis). Lihat [PRIVACY.md](PRIVACY.md).
+- Kalau kamu hanya menyalin `eboot.bin`, jalankan ulang Setup Wizard dan pilih folder game lengkap (`eboot.bin` + `sce_module` + `sce_sys` + data game).
 
-### 4. Controller Tidak Terdeteksi
+### 5. Controller Tidak Terdeteksi
 - Controller XInput (Xbox, PlayStation via DS4Windows/Steam) langsung berfungsi otomatis.
 - Untuk controller generic DirectInput, klik tombol **🎮 Gamepad** di bilah alat launcher untuk membuka utilitas kalibrasi `basara4-pad-mapper.exe`.
 
@@ -101,6 +120,7 @@ Semua opsi tersinkronisasi otomatis antara GUI Launcher, menu in-game (`Insert` 
 | `telemetry_upload` | `ask` | Perilaku pelaporan crash (`ask`, `never`, `always`) |
 | `first_run_done` | `0` | Status penyelesaian setup wizard pertama |
 | `legal_acknowledged`| `0` | Status persetujuan disclaimer legal fair use |
+| `game_dir` | *(otomatis)* | Folder game PS4 lengkap yang dipilih di Setup Wizard. Dipakai langsung — jangan pindahkan folder setelah setup. |
 
 ---
 
@@ -131,7 +151,7 @@ python build_launcher.py
 ### 3. Pembuatan Paket Rilis & Verifikasi
 ```powershell
 # Buat arsip ZIP portabel & checksums SHA256
-python scripts/package_release.py --version 1.0-update3
+python scripts/package_release.py --version 1.8
 
 # Verifikasi integritas paket rilis
 python scripts/verify_release.py

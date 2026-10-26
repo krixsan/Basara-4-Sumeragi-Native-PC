@@ -1,5 +1,9 @@
 # Sengoku Basara 4 Sumeragi — PC Native Port (`basara_pc`)
 
+> ⚠️ **BARU DI SINI?** Baca [Panduan Instalasi (INSTALL.md)](./INSTALL.md) dulu agar tidak gagal paham soal file `eboot.bin` dan `sce_module`!
+>
+> **NEW HERE?** Read the [Installation Guide](./INSTALL.md) first. You must select the **whole PS4 game folder** (`eboot.bin` + `sce_module` + `sce_sys` + game data), not just `eboot.bin`.
+
 <p align="center">
   <img src="packaging/windows/icons/basara4.ico" alt="Sengoku Basara 4 Logo" width="128" height="128" />
 </p>
@@ -9,7 +13,7 @@
   <a href="https://www.vulkan.org"><img src="https://img.shields.io/badge/API-Vulkan%201.3+-E42528?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan API" /></a>
   <a href="https://en.wikipedia.org/wiki/X86-64"><img src="https://img.shields.io/badge/Architecture-x86__64%20Native%20Runtime-4B32C3?style=for-the-badge" alt="Architecture" /></a>
   <a href="https://visualstudio.microsoft.com"><img src="https://img.shields.io/badge/Dependency-VC++%202015--2022%20x64-5C2D91?style=for-the-badge" alt="VC++ Redist" /></a>
-  <a href="../../releases"><img src="https://img.shields.io/badge/Release-Update%203-10B981?style=for-the-badge" alt="Release" /></a>
+  <a href="../../releases"><img src="https://img.shields.io/badge/Release-v1.8-10B981?style=for-the-badge" alt="Release" /></a>
 </p>
 
 <p align="center">
@@ -21,24 +25,34 @@ A high-performance native PC runtime and Vulkan presentation engine for **Sengok
 
 ---
 
-## Quick Start (3 Steps — Under 5 Minutes)
+## Quick Start (5 Steps — Under 10 Minutes)
 
-### 1. Download
-Get the latest build from the [Releases](../../releases) tab:
+### 1. Download & Extract
+Get **v1.8 or newer** from the [Releases](../../releases) tab:
 - **Installer (Recommended):** `Basara4_Sumeragi_PC_Setup_v<version>.exe` (Per-user non-admin installation, creates Start Menu & Desktop shortcuts, preserves user data on uninstall).
-- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Extract anywhere).
+- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Extract to a normal folder such as `D:\Games\Basara4_Sumeragi_PC`, not inside the ZIP and not into `Program Files`).
 
-### 2. Launch
+### 2. Open the Launcher
 Run **`Basara4_Launcher.exe`**.
 - The built-in dependency engine verifies **Vulkan 1.3 loader**, **VC++ Redist 2015–2022 x64**, **Windows version**, and **Storage**.
 - If any required library is missing, one-click official download links are provided.
 
-### 3. Setup & Play
-On a fresh installation, the **5-Step Setup Wizard** will guide you:
-1. Accept the fair-use legal disclaimer.
-2. Select your legally dumped `eboot.bin` (both decrypted SELF and standard ELF formats are supported).
-3. The wizard automatically links modules and creates `out/boot-linked.bin` in seconds.
-4. Click **PLAY GAME**!
+### 3. Click Setup Wizard
+Open the **5-Step Setup Wizard** (⚡ wand icon), read the fair-use notice, and accept the legal checkboxes.
+
+### 4. Select the PS4 Game Folder (Not `eboot.bin`)
+**This is the step most people get wrong.** Select the folder that directly contains:
+- `eboot.bin`
+- `sce_module` (audio/system modules — **required**)
+- `sce_sys` (`param.sfo`, icons)
+- `nativePS4` (or `data`) — the game assets
+
+Do **not** select `eboot.bin` itself. The wizard rejects folders without `sce_module` because that causes crackling audio and crashes.
+
+### 5. Wait for Auto-Build, Then Play
+The wizard links the modules and creates `out/boot-linked.bin` in 15–30 seconds. When it says **Setup Completed**, click **⚔️ Play Now** (or **Back to Launcher** → **PLAY GAME**).
+
+> 📖 Need pictures, folder examples, and fixes? Read the full **[Panduan Instalasi (INSTALL.md)](./INSTALL.md)**.
 
 ---
 
@@ -47,7 +61,7 @@ On a fresh installation, the **5-Step Setup Wizard** will guide you:
 > [!IMPORTANT]
 > **No copyrighted Capcom assets, disc images, binaries, or encryption keys are bundled with this software.**
 > 
-> You need to dump `eboot.bin` from your legally owned PS4. Search the PS4 homebrew community for dumping tutorials.
+> You must dump the **complete game folder** from your legally owned PS4: `eboot.bin`, `sce_module`, `sce_sys`, and the game data (`nativePS4` or `data`). Dumping only `eboot.bin` will cause missing audio modules, crackling sound, or crashes. Search the PS4 homebrew community for dumping tutorials.
 
 ---
 
@@ -74,11 +88,16 @@ On a fresh installation, the **5-Step Setup Wizard** will guide you:
 - **Cause:** Missing MSVC 14.0 x64 runtime libraries (`vcruntime140.dll` / `msvcp140.dll`).
 - **Solution:** Download and install [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
-### 3. Crash on Startup or Map Load
+### 3. Crackling / Stuttering Audio or Missing `sce_module`
+- **Cause:** The selected game folder is missing `sce_module`, so native audio modules such as `libSceNgs2.sprx` and `libSceAjm.sprx` are not linked.
+- **Solution:** Click **🔧 REPAIR & PLAY** in the launcher and select the **full PS4 game folder** (not `eboot.bin`). See [INSTALL.md](INSTALL.md#-troubleshooting-solusi-masalah).
+
+### 4. Crash on Startup or Map Load
 - Check `user/logs/basara.log` and `user/crashes/` for raw crash dumps (`crash_raw_*.log`).
 - Telemetry & crash minidumps follow strict privacy-by-design standards with personal identifiers redacted (see [PRIVACY.md](PRIVACY.md)).
+- If you only copied `eboot.bin`, re-run Setup Wizard and select the full game folder (`eboot.bin` + `sce_module` + `sce_sys` + game data).
 
-### 4. Controller Not Recognized
+### 5. Controller Not Recognized
 - XInput controllers (Xbox, PS4/PS5 via DS4Windows/Steam) work natively.
 - For generic DirectInput controllers, click **🎮 Gamepad** in the launcher toolbar to open `basara4-pad-mapper.exe` and generate `user/gamepad_mapping.txt`.
 
@@ -101,6 +120,7 @@ Settings are synchronized between the graphical launcher, in-game overlay (`Inse
 | `telemetry_upload` | `ask` | Crash reporter behavior (`ask`, `never`, `always`) |
 | `first_run_done` | `0` | Setup wizard completion state flag |
 | `legal_acknowledged`| `0` | Fair-use legal acknowledgement flag |
+| `game_dir` | *(auto)* | Full PS4 game folder selected in Setup Wizard. Used in place — do not move the folder after setup. |
 
 ---
 
@@ -131,7 +151,7 @@ python build_launcher.py
 ### 3. Package Portable Release & Installer
 ```powershell
 # Create portable ZIP & SHA256 checksums
-python scripts/package_release.py --version 1.0-update3
+python scripts/package_release.py --version 1.8
 
 # Verify package integrity
 python scripts/verify_release.py

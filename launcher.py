@@ -89,6 +89,7 @@ def read_ini():
         "log_level": "info",
         "first_run_done": "0",
         "legal_acknowledged": "0",
+        "game_dir": "",
     }
     path = INI_FILE if os.path.exists(INI_FILE) else (FALLBACK_INI if os.path.exists(FALLBACK_INI) else None)
     if path:
@@ -145,6 +146,28 @@ def write_ini(data):
             f.writelines(new_lines)
     except Exception as e:
         print(f"Warning: unable to save {target}: {e}")
+
+
+def game_folder_candidates():
+    """Return game-folder candidates, preferring the folder saved by Setup Wizard."""
+    configured = read_ini().get("game_dir", "").strip().strip('"')
+    raw_candidates = []
+    if configured:
+        raw_candidates.append(configured)
+    raw_candidates.extend([
+        os.path.join("extracted_game", "app0"),
+        "app0",
+    ])
+
+    candidates = []
+    seen = set()
+    for raw in raw_candidates:
+        path = os.path.abspath(os.path.expanduser(raw))
+        key = os.path.normcase(path)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(path)
+    return candidates
 
 
 def check_game_integrity(boot_bin=None):
@@ -217,11 +240,19 @@ def verify_game_installation():
             boot_bin = cand
             break
 
+    # Prefer the game folder explicitly selected in Setup Wizard (basara.ini: game_dir).
+    # The folder is used in place, so sce_module/, sce_sys/ and the game data stay intact.
+    candidates = game_folder_candidates()
     app0 = None
-    for cand in [os.path.join("extracted_game", "app0"), "app0"]:
-        if os.path.isdir(cand):
+    for cand in candidates:
+        if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "eboot.bin")):
             app0 = cand
             break
+    if not app0:
+        for cand in candidates:
+            if os.path.isdir(cand):
+                app0 = cand
+                break
 
     eboot_found = False
     if app0:
@@ -230,7 +261,7 @@ def verify_game_installation():
         else:
             missing.append(f"{app0}/eboot.bin")
     else:
-        missing.append("Game folder ('extracted_game/app0' or 'app0')")
+        missing.append("Game folder (select the full PS4 game folder in Setup Wizard)")
 
     link_warning = None
     if boot_bin:
@@ -426,12 +457,92 @@ def validate_eboot_file(path: str):
         return False, f"Unable to read file: {e}"
 
 
+def validate_game_folder(path: str):
+    """
+    Validate a complete PS4 game folder selected by the user.
+
+    Required layout:
+      game_folder/
+        eboot.bin
+        sce_module/      (audio/system modules such as libSceNgs2.sprx)
+        sce_sys/param.sfo
+        nativePS4/ or data/  (the game assets)
+
+    Selecting only eboot.bin is always rejected. This prevents the common
+    "crackling audio / crash" setup caused by a missing sce_module folder.
+    """
+    path = (path or "").strip().strip('"')
+    if not path:
+        return False, "Please select your PS4 game folder."
+
+    folder = os.path.abspath(os.path.expanduser(path))
+    if os.path.isfile(folder):
+        return False, (
+            "That is a file. Select the game FOLDER that contains eboot.bin and "
+            "sce_module (not eboot.bin itself)."
+        )
+    if not os.path.isdir(folder):
+        return False, "Folder not found. Select the main PS4 game folder."
+
+    eboot = os.path.join(folder, "eboot.bin")
+    if not os.path.isfile(eboot):
+        return False, (
+            "eboot.bin was not found here. Select the folder that DIRECTLY contains "
+            "eboot.bin, sce_module, sce_sys and the game data (nativePS4/data)."
+        )
+
+    valid, msg = validate_eboot_file(eboot)
+    if not valid:
+        return False, f"eboot.bin is not valid: {msg}"
+
+    sce_module = os.path.join(folder, "sce_module")
+    if not os.path.isdir(sce_module):
+        return False, (
+            "sce_module folder is missing. Do NOT select only eboot.bin - select the "
+            "full PS4 game folder (eboot.bin + sce_module + sce_sys + nativePS4/data)."
+        )
+
+    try:
+        modules = [
+            name for name in os.listdir(sce_module)
+            if name.lower().endswith((".sprx", ".prx"))
+            and os.path.isfile(os.path.join(sce_module, name))
+        ]
+    except OSError as exc:
+        return False, f"Cannot read the sce_module folder: {exc}"
+
+    if not modules:
+        return False, (
+            "sce_module exists but is empty. Copy the full sce_module folder from "
+            "your PS4 dump (libSceNgs2.sprx, libSceAjm.sprx, etc.)."
+        )
+
+    if not os.path.isfile(os.path.join(folder, "sce_sys", "param.sfo")):
+        return False, (
+            "sce_sys/param.sfo is missing. Select the full game folder, not a "
+            "partial dump or an app0 subfolder without sce_sys."
+        )
+
+    data_dir = next(
+        (name for name in ("nativePS4", "data")
+         if os.path.isdir(os.path.join(folder, name))),
+        None
+    )
+    if not data_dir:
+        return False, (
+            "Game data folder (nativePS4 or data) is missing. Select the full PS4 "
+            "game folder, not a partial dump that only contains eboot.bin."
+        )
+
+    return True, f"{msg}; {len(modules)} system module(s) found"
+
+
 class FirstRunWizard(tk.Toplevel):
     """
     5-Step Interactive First-Run Setup & Compliance Wizard:
     Step 1: Welcome & Legal Dump Information
     Step 2: Legal Checkboxes (Fair Use & Personal Ownership)
-    Step 3: Locate eboot.bin & Magic Byte / Size Validation (SELF & ELF)
+    Step 3: Locate the full PS4 game folder & validate eboot.bin + sce_module
     Step 4: Auto-Build binary image via auto_builder with streaming log
     Step 5: Completion & Launch Direct / Back to Launcher
     """
@@ -454,6 +565,7 @@ class FirstRunWizard(tk.Toplevel):
 
         self.current_step = 1
         self.selected_eboot = ""
+        self.selected_game_dir = ""
         self.build_framework()
         self.show_step(1)
 
@@ -597,11 +709,12 @@ class FirstRunWizard(tk.Toplevel):
 
         desc = (
             "This software is an open-source native PC runtime wrapper and Vulkan presentation engine.\n\n"
-            "To experience the game on PC, you must provide your own legally obtained game executable\n"
-            "(eboot.bin) dumped from your legally purchased PlayStation 4 disc or digital copy.\n\n"
+            "To experience the game on PC, you must provide your own legally obtained PS4 game dump.\n"
+            "The wizard needs the COMPLETE game folder (eboot.bin + sce_module + sce_sys + game data),\n"
+            "not just the eboot.bin file.\n\n"
             "• Zero Piracy Guarantee: No copyrighted game assets or binaries are bundled.\n"
-            "• First-Run Automation: This wizard will guide you to locate your eboot.bin and\n"
-            "  automatically build out/boot-linked.bin in under 2 minutes.\n\n"
+            "• First-Run Automation: This wizard will guide you to select your full PS4 game folder\n"
+            "  and automatically build out/boot-linked.bin in under 2 minutes.\n\n"
             "Click 'Get Started' to proceed, or 'Skip Wizard' if you prefer manual configuration."
         )
         lbl_desc = tk.Label(
@@ -666,7 +779,7 @@ class FirstRunWizard(tk.Toplevel):
 
         cb2 = tk.Checkbutton(
             frame_cb,
-            text="I confirm that I have dumped / will dump eboot.bin myself from my legally owned PS4 console.",
+            text="I dumped / will dump the complete PS4 game folder (eboot.bin + sce_module) myself.",
             variable=self.var_dump_self,
             command=on_toggle,
             font=(FONT_FAMILY, 9, "bold"),
@@ -688,14 +801,14 @@ class FirstRunWizard(tk.Toplevel):
         lbl_note.pack(anchor="w", pady=(14, 0))
 
     def render_step3(self):
-        self.lbl_head_sub.config(text="Step 3 of 5: Locate Game Executable (eboot.bin)")
+        self.lbl_head_sub.config(text="Step 3 of 5: Locate the Full PS4 Game Folder")
         self.btn_skip.pack(side="left", padx=20, pady=12)
         self.btn_back.pack(side="right", padx=(0, 10), pady=12)
         self.btn_next.config(text="Next >", state="disabled", command=self.go_next)
 
         lbl_title = tk.Label(
             self.body_container,
-            text="Select Your Decrypted eboot.bin",
+            text="Select the PS4 Game Folder (containing eboot.bin & sce_module)",
             font=(FONT_SUBTITLE, 11, "bold"),
             fg=COLOR_TEXT_WHITE,
             bg="#0c0e14"
@@ -704,17 +817,26 @@ class FirstRunWizard(tk.Toplevel):
 
         lbl_desc = tk.Label(
             self.body_container,
-            text="Both decrypted PlayStation 4 SELF and standard x86-64 ELF executables (>10MB) are supported.",
+            text=(
+                "Select the folder that DIRECTLY contains eboot.bin - not eboot.bin itself.\n"
+                "It must also contain sce_module/ (audio modules), sce_sys/ and the game data\n"
+                "folder (nativePS4/ or data/). Missing sce_module causes crackling audio."
+            ),
             font=(FONT_FAMILY, 9),
             fg=COLOR_TEXT_MUTED,
-            bg="#0c0e14"
+            bg="#0c0e14",
+            justify="left",
+            wraplength=580
         )
         lbl_desc.pack(anchor="w", pady=(0, 14))
 
         frame_input = tk.Frame(self.body_container, bg="#0c0e14")
         frame_input.pack(fill="x", pady=6)
 
-        self.eboot_entry_var = tk.StringVar(value=self.selected_eboot)
+        initial_folder = self.selected_game_dir
+        if not initial_folder and self.selected_eboot:
+            initial_folder = os.path.dirname(os.path.abspath(self.selected_eboot))
+        self.eboot_entry_var = tk.StringVar(value=initial_folder)
         self.entry_eboot = tk.Entry(
             frame_input,
             textvariable=self.eboot_entry_var,
@@ -745,55 +867,79 @@ class FirstRunWizard(tk.Toplevel):
 
         self.lbl_val_status = tk.Label(
             self.body_container,
-            text="Please select an eboot.bin file to validate.",
+            text="Select the game folder that contains eboot.bin and sce_module.",
             font=(FONT_FAMILY, 8),
             fg=COLOR_TEXT_SUB,
-            bg="#0c0e14"
+            bg="#0c0e14",
+            justify="left",
+            wraplength=580
         )
         self.lbl_val_status.pack(anchor="w", pady=10)
 
-        # Check existing candidates
-        for cand in [
-            os.path.join("extracted_game", "app0", "eboot.bin"),
-            os.path.join("app0", "eboot.bin")
-        ]:
-            if os.path.isfile(cand):
-                self.eboot_entry_var.set(os.path.abspath(cand))
-                self.validate_selected_path(os.path.abspath(cand))
-                break
-
         self.eboot_entry_var.trace_add("write", lambda *args: self.validate_selected_path(self.eboot_entry_var.get()))
 
+        if initial_folder:
+            self.validate_selected_path(initial_folder)
+        else:
+            # Auto-detect an existing full game folder (including a previously configured path).
+            for cand in game_folder_candidates():
+                if os.path.isfile(os.path.join(cand, "eboot.bin")):
+                    self.eboot_entry_var.set(cand)
+                    break
+
     def browse_eboot(self):
-        f = filedialog.askopenfilename(
-            title="Select PS4 Game Executable (eboot.bin)",
-            filetypes=[("PS4 Executables (*.bin;*.elf)", "*.bin;*.elf;eboot*"), ("All Files (*.*)", "*.*")]
+        current = self.eboot_entry_var.get().strip().strip('"')
+        initial_dir = current if os.path.isdir(current) else os.getcwd()
+        f = filedialog.askdirectory(
+            title="Select the PS4 Game Folder (containing eboot.bin & sce_module)",
+            initialdir=initial_dir,
+            mustexist=True
         )
         if f:
-            self.eboot_entry_var.set(f)
-            self.validate_selected_path(f)
+            self.eboot_entry_var.set(os.path.abspath(f))
+            self.validate_selected_path(self.eboot_entry_var.get())
 
     def validate_selected_path(self, path):
-        path = path.strip().strip('"')
+        path = (path or "").strip().strip('"')
         if not path:
-            self.lbl_val_status.config(text="Please select an eboot.bin file.", fg=COLOR_TEXT_SUB)
+            self.lbl_val_status.config(
+                text="Select the game folder that contains eboot.bin and sce_module.",
+                fg=COLOR_TEXT_SUB
+            )
+            self.selected_game_dir = ""
+            self.selected_eboot = ""
             self.btn_next.config(state="disabled")
             return
 
-        valid, msg = validate_eboot_file(path)
-        if valid:
-            size_mb = os.path.getsize(path) / (1024 * 1024)
+        normalized = os.path.abspath(os.path.expanduser(path))
+        if os.path.isfile(normalized):
             self.lbl_val_status.config(
-                text=f"✅ Valid: {msg} ({size_mb:.1f} MB)",
+                text="❌ You selected a file. Select the FOLDER that contains eboot.bin and sce_module.",
+                fg=COLOR_ERROR
+            )
+            self.selected_game_dir = ""
+            self.selected_eboot = ""
+            self.btn_next.config(state="disabled")
+            return
+
+        valid, msg = validate_game_folder(normalized)
+        if valid:
+            eboot = os.path.join(normalized, "eboot.bin")
+            size_mb = os.path.getsize(eboot) / (1024 * 1024)
+            self.lbl_val_status.config(
+                text=f"✅ Valid game folder: {msg} · eboot.bin {size_mb:.1f} MB",
                 fg=COLOR_SUCCESS
             )
-            self.selected_eboot = path
+            self.selected_game_dir = normalized
+            self.selected_eboot = eboot
             self.btn_next.config(state="normal")
         else:
             self.lbl_val_status.config(
                 text=f"❌ {msg}",
                 fg=COLOR_ERROR
             )
+            self.selected_game_dir = ""
+            self.selected_eboot = ""
             self.btn_next.config(state="disabled")
 
     def render_step4(self):
@@ -813,7 +959,7 @@ class FirstRunWizard(tk.Toplevel):
 
         lbl_desc = tk.Label(
             self.body_container,
-            text="Linking eboot.bin with Orbis PRX modules and generating out/boot-linked.bin...",
+            text="Linking eboot.bin with the Orbis PRX modules from your selected game folder and generating out/boot-linked.bin...",
             font=(FONT_FAMILY, 9),
             fg=COLOR_TEXT_MUTED,
             bg="#0c0e14"
@@ -855,10 +1001,16 @@ class FirstRunWizard(tk.Toplevel):
                 self.after(0, lambda: self.on_build_error(f"Insufficient disk space ({free_mb} MB free). At least 500 MB is required!"))
                 return
 
-            dest_dir = os.path.join("extracted_game", "app0")
-            os.makedirs(dest_dir, exist_ok=True)
+            if not self.selected_game_dir:
+                raise RuntimeError("No PS4 game folder selected. Go back and choose the full game folder.")
+
+            # Use the selected folder in place. This keeps sce_sys/, nativePS4/data and all
+            # game assets available to the runtime without copying tens of gigabytes.
+            dest_dir = os.path.abspath(self.selected_game_dir)
+            if not os.path.isdir(dest_dir):
+                raise FileNotFoundError(f"Game folder not found: '{dest_dir}'")
             dest_eboot = os.path.join(dest_dir, "eboot.bin")
-            source_dir = os.path.dirname(os.path.abspath(self.selected_eboot))
+            source_dir = dest_dir
 
             # Step 1.a: Validasi file eboot.bin
             self.append_log("Validating eboot.bin...")
@@ -870,7 +1022,7 @@ class FirstRunWizard(tk.Toplevel):
                 shutil.copy2(self.selected_eboot, dest_eboot)
 
             # Step 1.b: COPY/EKSTRAK semua modul .sprx dari folder game PS4 user
-            # ke folder user/sys_modules/ atau extracted_game/app0/sce_module/
+            # ke folder user/sys_modules/ dan <folder-game>/sce_module/
             self.append_log("Scanning and extracting PS4 system modules (.sprx / .prx)...")
             dest_sce_mod = os.path.join(dest_dir, "sce_module")
             os.makedirs(dest_sce_mod, exist_ok=True)
@@ -1017,10 +1169,13 @@ class FirstRunWizard(tk.Toplevel):
         self.btn_skip.pack_forget()
         self.btn_back.pack_forget()
 
-        write_ini({
+        completed_settings = {
             "first_run_done": "1",
             "legal_acknowledged": "1"
-        })
+        }
+        if self.selected_game_dir:
+            completed_settings["game_dir"] = self.selected_game_dir
+        write_ini(completed_settings)
 
         lbl_title = tk.Label(
             self.body_container,
@@ -1037,8 +1192,9 @@ class FirstRunWizard(tk.Toplevel):
             "  ✔ out/content.bin          (AppContent offline profile active)\n"
             "  ✔ out/import_names.txt     (Symbol map table ready)\n"
             "  ✔ High-FPS patch engine    (Capcom MT Framework limiter unlocked)\n\n"
-            "You are ready to launch Sengoku Basara 4 Sumeragi PC with ultra-low latency,\n"
-            "modern gamepad support, and high-framerate Vulkan 1.3 presentation!"
+            "Your full game folder is used in place, so sce_module, sce_sys and the game data\n"
+            "remain available to the runtime. You are ready to launch Sengoku Basara 4 Sumeragi PC\n"
+            "with ultra-low latency, modern gamepad support, and high-framerate Vulkan 1.3 presentation!"
         )
         lbl_desc = tk.Label(
             self.body_container,
@@ -1077,6 +1233,8 @@ class FirstRunWizard(tk.Toplevel):
         self.btn_launcher.pack(side="right", padx=(0, 10), pady=12)
 
     def go_next(self):
+        if self.current_step == 3 and not self.selected_game_dir:
+            return
         if self.current_step < 5:
             self.show_step(self.current_step + 1)
 
@@ -1200,13 +1358,13 @@ class BasaraLauncher(tk.Tk):
         return act, inact, hov
 
     def generate_textures(self):
-        # 1. Background image composition
-        candidates = [
-            os.path.join("extracted_game", "app0", "sce_sys", "pic1.png"),
-            os.path.join("extracted_game", "app0", "sce_sys", "pic0.png"),
-            os.path.join("app0", "sce_sys", "pic1.png"),
-            os.path.join("app0", "sce_sys", "pic0.png"),
-        ]
+        # 1. Background image composition (prefer the folder selected in Setup Wizard)
+        candidates = []
+        for game_dir in game_folder_candidates():
+            candidates.extend([
+                os.path.join(game_dir, "sce_sys", "pic1.png"),
+                os.path.join(game_dir, "sce_sys", "pic0.png"),
+            ])
         found_art = None
         for p in candidates:
             if os.path.isfile(p):
@@ -1276,8 +1434,8 @@ class BasaraLauncher(tk.Tk):
 
         # 2. Game Icon (50x50)
         icon0_cand = [
-            os.path.join("extracted_game", "app0", "sce_sys", "icon0.png"),
-            os.path.join("app0", "sce_sys", "icon0.png"),
+            os.path.join(game_dir, "sce_sys", "icon0.png")
+            for game_dir in game_folder_candidates()
         ]
         self.photo_icon0 = None
         for p in icon0_cand:
@@ -2031,7 +2189,7 @@ class BasaraLauncher(tk.Tk):
             self.state = "MISSING"
             self.canvas.itemconfig(self.status_dot, fill=COLOR_ERROR)
             self.canvas.itemconfig(self.status_title, text="Setup Required — Missing game files", fill=COLOR_ERROR)
-            self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Click '⚡ Setup Wizard' or provide eboot.bin", fill=COLOR_ERROR)
+            self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Click '⚡ Setup Wizard' and select your full PS4 game folder", fill=COLOR_ERROR)
             self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
             self.canvas.itemconfig(self.play_txt_id, text="SETUP REQUIRED", fill="#6E7A8E")
             self.canvas.config(cursor="arrow")
@@ -2078,7 +2236,7 @@ class BasaraLauncher(tk.Tk):
 
         missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
         if not app0 or not eboot_found:
-            for cand in [os.path.join("extracted_game", "app0"), "app0"]:
+            for cand in game_folder_candidates():
                 if os.path.isfile(os.path.join(cand, "eboot.bin")):
                     app0 = cand
                     eboot_found = True
@@ -2087,8 +2245,8 @@ class BasaraLauncher(tk.Tk):
         if not app0 or not eboot_found:
             resp = messagebox.askyesno(
                 "Setup Required",
-                "Game files (eboot.bin) not found in extracted_game/app0.\n\n"
-                "Would you like to open Setup Wizard to locate your game directory?",
+                "Game files (eboot.bin) not found.\n\n"
+                "Would you like to open Setup Wizard and select your full PS4 game folder?",
                 icon="question"
             )
             if resp:
@@ -2158,6 +2316,15 @@ class BasaraLauncher(tk.Tk):
         link_warning = extra[0] if extra else None
         if not boot_bin:
             messagebox.showerror("Engine Warning", "Cannot launch. Missing components:\n\n" + "\n".join(missing))
+            return
+
+        if not app0 or not eboot_found:
+            messagebox.showerror(
+                "Game Folder Missing",
+                "The full PS4 game folder could not be found.\n\n"
+                "Click '⚡ Setup Wizard' and select the folder that contains\n"
+                "eboot.bin, sce_module, sce_sys and the game data (nativePS4/data)."
+            )
             return
 
         if link_warning:
@@ -2277,13 +2444,13 @@ def run_headless_prepare():
         return 1
 
     app0 = None
-    for cand in [os.path.join("extracted_game", "app0"), "app0"]:
+    for cand in game_folder_candidates():
         if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "eboot.bin")):
             app0 = cand
             break
 
     if not app0:
-        print("[ERROR] Could not find eboot.bin in 'extracted_game/app0' or 'app0'.")
+        print("[ERROR] Could not find a full PS4 game folder. Run Setup Wizard first.")
         return 1
 
     out_dir = os.path.join(os.getcwd(), "out")
