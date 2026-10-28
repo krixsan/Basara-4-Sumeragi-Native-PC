@@ -13,7 +13,7 @@
   <a href="https://www.vulkan.org"><img src="https://img.shields.io/badge/API-Vulkan%201.3+-E42528?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan API" /></a>
   <a href="https://en.wikipedia.org/wiki/X86-64"><img src="https://img.shields.io/badge/Architecture-x86__64%20Native%20Runtime-4B32C3?style=for-the-badge" alt="Architecture" /></a>
   <a href="https://visualstudio.microsoft.com"><img src="https://img.shields.io/badge/Dependency-VC++%202015--2022%20x64-5C2D91?style=for-the-badge" alt="VC++ Redist" /></a>
-  <a href="../../releases"><img src="https://img.shields.io/badge/Release-v1.8-10B981?style=for-the-badge" alt="Release" /></a>
+  <a href="../../releases"><img src="https://img.shields.io/badge/Release-v2.0-10B981?style=for-the-badge" alt="Release" /></a>
 </p>
 
 <p align="center">
@@ -25,32 +25,48 @@ A high-performance native PC runtime and Vulkan presentation engine for **Sengok
 
 ---
 
+## Key Features
+
+- **Native x86_64 Execution**: Direct binary execution on modern 64-bit Windows CPUs without virtual machine overhead.
+- **Vulkan 1.3 Rendering**: Modern low-overhead graphics pipeline with custom swapchain presentation modes.
+- **Framerate Unlocking (120+ FPS)**: Dynamic present modes (`eImmediate` / `eMailbox`) eliminate 60 Hz limits, while fixed targets (60/90/120/144 FPS) run on locked FIFO pacing.
+- **High-Definition Graphics**: Built-in render scale supersampling (1.0x to 2.0x), AMD RCAS contrast adaptive sharpening, and 16x Anisotropic Filtering.
+- **Single-Window Samurai Launcher**: Unified Crimson & Gold launcher with integrated graphics controls, native tooltips, and real-time dependency checks.
+- **Co-op Thread Optimization**: Elevated render/audio worker threads prevent frame drops during intense 2-player local split-screen battles.
+- **Cutscene Stall Recovery**: Integrated 3-second watchdog timer automatically recovers from audio drift without softlocking.
+
+---
+
 ## Quick Start (5 Steps — Under 10 Minutes)
 
 ### 1. Download & Extract
-Get **v1.8 or newer** from the [Releases](../../releases) tab:
-- **Installer (Recommended):** `Basara4_Sumeragi_PC_Setup_v<version>.exe` (Per-user non-admin installation, creates Start Menu & Desktop shortcuts, preserves user data on uninstall).
-- **Portable ZIP:** `Basara4_Sumeragi_PC_v<version>.zip` (Extract to a normal folder such as `D:\Games\Basara4_Sumeragi_PC`, not inside the ZIP and not into `Program Files`).
+
+Get **v2.0 or newer** from the [Releases](../../releases) tab:
+- **Portable ZIP:** `Basara4_Sumeragi_PC_v2.0.zip` (Extract to a standard directory such as `D:\Games\Basara4_Sumeragi_PC`; do not run inside the ZIP or in `Program Files`).
 
 ### 2. Open the Launcher
+
 Run **`Basara4_Launcher.exe`**.
 - The built-in dependency engine verifies **Vulkan 1.3 loader**, **VC++ Redist 2015–2022 x64**, **Windows version**, and **Storage**.
 - If any required library is missing, one-click official download links are provided.
 
 ### 3. Click Setup Wizard
+
 Open the **5-Step Setup Wizard** (⚡ wand icon), read the fair-use notice, and accept the legal checkboxes.
 
 ### 4. Select the PS4 Game Folder (Not `eboot.bin`)
-**This is the step most people get wrong.** Select the folder that directly contains:
+
+Select the folder that directly contains:
 - `eboot.bin`
 - `sce_module` (audio/system modules — **required**)
 - `sce_sys` (`param.sfo`, icons)
 - `nativePS4` (or `data`) — the game assets
 
-Do **not** select `eboot.bin` itself. The wizard rejects folders without `sce_module` because that causes crackling audio and crashes.
+Do **not** select `eboot.bin` itself. The wizard rejects folders without `sce_module` because missing modules cause crackling audio and crashes.
 
 ### 5. Wait for Auto-Build, Then Play
-The wizard links the modules and creates `out/boot-linked.bin` in 15–30 seconds. When it says **Setup Completed**, click **⚔️ Play Now** (or **Back to Launcher** → **PLAY GAME**).
+
+The wizard links the modules and creates `out/boot-linked.bin` in 15–30 seconds. When it displays **Setup Completed**, click **⚔️ Play Now** (or **Back to Launcher** → **INITIALIZE & PLAY**).
 
 > 📖 Need pictures, folder examples, and fixes? Read the full **[Panduan Instalasi (INSTALL.md)](./INSTALL.md)**.
 
@@ -90,7 +106,7 @@ The wizard links the modules and creates `out/boot-linked.bin` in 15–30 second
 
 ### 3. Crackling / Stuttering Audio or Missing `sce_module`
 - **Cause:** The selected game folder is missing `sce_module`, so native audio modules such as `libSceNgs2.sprx` and `libSceAjm.sprx` are not linked.
-- **Solution:** Click **🔧 REPAIR & PLAY** in the launcher and select the **full PS4 game folder** (not `eboot.bin`). See [INSTALL.md](INSTALL.md#-troubleshooting-solusi-masalah).
+- **Solution:** Click **🔧 REPAIR & PLAY** in the launcher and select the **full PS4 game folder** (not `eboot.bin`). See [INSTALL.md](INSTALL.md).
 
 ### 4. Crash on Startup or Map Load
 - Check `user/logs/basara.log` and `user/crashes/` for raw crash dumps (`crash_raw_*.log`).
@@ -103,118 +119,39 @@ The wizard links the modules and creates `out/boot-linked.bin` in 15–30 second
 
 ---
 
-## Graphics Settings (v2.1)
+## Graphics & Performance Settings (`basara.ini`)
 
-### Quality Options (`basara.ini`)
-
-**New in v2.1**: Fine-grained graphics quality control for balancing visual fidelity and performance.
+Settings can be configured directly inside the graphical launcher or by editing `basara.ini`:
 
 ```ini
-# Render resolution (scene resolution before upscaling)
-render_res=1080              # 720 | 1080 | 1440 | 2160
+# Window and display presentation resolution
+output_res=1920x1080         # 1280x720 | 1920x1080 | 2560x1440 | 3840x2160
 
-# Custom resolution scale multiplier (supersampling/downsampling)
-render_scale=1.0             # 0.5 (half) to 2.0 (double) - 1.0 is native
+# Internal render scale multiplier (supersampling)
+render_scale=1.0             # 1.0 (native) | 1.5 (supersampling) | 2.0 (ultra-sharp)
 
-# Anti-aliasing method
-anti_aliasing=fxaa           # off | fxaa | msaa2 | msaa4
-
-# Anisotropic filtering (texture sharpness at angles)
+# Texture filtering quality
 anisotropy=16                # 0 (off) | 2 | 4 | 8 | 16 (recommended)
 
-# AMD FSR upscaling and sharpening
-fsr1=1                       # 0 (off) | 1 (on)
-rcas=1                       # 0 (off) | 1 (on) - contrast adaptive sharpening
+# AMD RCAS sharpness strength
+rcas=1                       # 0 (off) | 1 (on)
 rcas_strength=75             # 0 (subtle) to 100 (aggressive)
 
-# Performance mode (v2.1: now respects manual overrides)
-performance_mode=0           # 0 (off) | 1 (suggests 720p, respects render_res)
+# Framerate limit
+fps_limit=144                # 60 | 90 | 120 | 144 | 240 | 0 (unlimited)
+
+# Process CPU priority
+process_priority=above_normal # normal | above_normal | high
 ```
 
 ### Recommended Presets
 
-| GPU Tier | Preset | Settings | Expected FPS |
-|----------|--------|----------|--------------|
-| **Low-End** (GTX 1050, RX 560) | Performance | `render_res=720`<br>`anti_aliasing=off`<br>`rcas=0` | 60 FPS |
-| **Mid-Range** (GTX 1060, RX 580) | Balanced | `render_res=900`<br>`anti_aliasing=fxaa`<br>`rcas=1` | 45-60 FPS |
-| **High-End** (RTX 2060, RX 6600) | High | `render_res=1080`<br>`anti_aliasing=fxaa`<br>`anisotropy=16` | 60-90 FPS |
-| **Enthusiast** (RTX 3070+, RX 6800+) | Ultra | `render_scale=1.5`<br>`anti_aliasing=msaa2`<br>`render_res=1440` | 60+ FPS |
-
-### Visual Quality Explained
-
-**Render Resolution** (`render_res`):
-- Internal scene resolution before upscaling to your display
-- Higher = sharper textures and geometry, but more GPU load
-- `720p` = 44% pixels vs 1080p (blurrier but faster)
-- `1080p` = native quality (recommended baseline)
-- `1440p` = 77% more pixels vs 1080p (sharper, GPU-intensive)
-
-**Render Scale** (`render_scale`):
-- Multiplier applied to render resolution (supersampling/downsampling)
-- `0.5` = half resolution (performance mode)
-- `1.0` = native (default)
-- `1.5` = 150% resolution (high-quality supersampling)
-- `2.0` = double resolution (ultra-sharp, very GPU-intensive)
-- **Example**: `render_res=1080` + `render_scale=1.5` = renders at 1620p, downsamples to 1080p
-
-**Anti-Aliasing** (`anti_aliasing`):
-- Smooths jagged edges on geometry
-- `off` = fastest, visible stair-stepping on edges
-- `fxaa` = fast post-process, slight blur, recommended for most
-- `msaa2` = high quality, 2x samples per pixel, moderate GPU cost
-- `msaa4` = highest quality, 4x samples, GPU-intensive
-
-**Anisotropic Filtering** (`anisotropy`):
-- Sharpens textures viewed at angles (floors, walls, terrain)
-- Minimal performance cost on modern GPUs
-- `16x` strongly recommended (default)
-
-**RCAS Sharpening** (`rcas`, `rcas_strength`):
-- AMD FidelityFX Contrast Adaptive Sharpening
-- Recovers detail lost during upscaling
-- `rcas_strength=75` = balanced sharpness (recommended)
-- `rcas_strength=100` = maximum sharpness (may introduce artifacts)
-
-### v2.1 Changes
-
-**Performance Mode No Longer Forces 720p**:
-- **v2.0 behavior**: `performance_mode=1` forced `render_res=720` (no override)
-- **v2.1 behavior**: `performance_mode=1` *suggests* 720p only if `render_res` not set
-- **Result**: You can now use `performance_mode=1` + `render_res=1080` for CPU optimizations without visual quality loss
-
-**RCAS Respects User Setting in Performance Mode**:
-- **v2.0 behavior**: Performance mode always disabled RCAS
-- **v2.1 behavior**: Performance mode only disables RCAS if `rcas=0` explicitly set
-- **Result**: Sharper image even in performance mode
-
-**New Quality Controls**:
-- `render_scale`: Custom resolution multiplier for supersampling
-- `anti_aliasing`: FXAA and MSAA options (FXAA recommended)
-
----
-
-## Configuration (`basara.ini`)
-
-Settings are synchronized between the graphical launcher, in-game overlay (`Insert` or `L3+R3`), and `basara.ini`:
-
-| Key | Default | Description |
-|---|---|---|
-| `output_res` | `1920x1080` | Window and display presentation resolution |
-| `render_res` | `1080` | Internal rendering target resolution (`720`, `1080`, `1440`, `2160`) |
-| `render_scale` | `1.0` | Custom resolution multiplier (`0.5` to `2.0`, supersampling at >1.0) *(v2.1)* |
-| `anti_aliasing` | `fxaa` | Anti-aliasing method (`off`, `fxaa`, `msaa2`, `msaa4`) *(v2.1)* |
-| `fullscreen` | `1` | `1` for borderless/exclusive fullscreen, `0` for windowed mode |
-| `fps_limit` | `144` | Target framerate limit (`60`, `90`, `120`, `144`, `240`, `0` for unlimited) |
-| `anisotropy` | `16` | Forced Anisotropic Filtering level (`0`, `2`, `4`, `8`, `16`) |
-| `fsr1` | `1` | `1` to enable AMD FSR 1.0 spatial upscaling |
-| `rcas` | `1` | `1` to enable Robust Contrast Adaptive Sharpening |
-| `rcas_strength` | `75` | RCAS sharpening intensity (`0` subtle to `100` aggressive) *(v2.1)* |
-| `performance_mode` | `0` | `1` suggests 720p but respects `render_res` override *(v2.1: no longer forces 720p)* |
-| `process_priority` | `above_normal` | Windows CPU scheduling priority (`normal`, `above_normal`, `high`) |
-| `telemetry_upload` | `ask` | Crash reporter behavior (`ask`, `never`, `always`) |
-| `first_run_done` | `0` | Setup wizard completion state flag |
-| `legal_acknowledged`| `0` | Fair-use legal acknowledgement flag |
-| `game_dir` | *(auto)* | Full PS4 game folder selected in Setup Wizard. Used in place — do not move the folder after setup. |
+| GPU Tier | Target Resolution | Render Scale | Anisotropy | RCAS | Expected FPS |
+|---|---|---|---|---|---|
+| **Entry-Level** (GTX 1050, RX 560) | 1280x720 / 1080p | 1.0x | 4x | Off | 60 FPS |
+| **Mid-Range** (GTX 1060, RX 580) | 1920x1080 | 1.0x | 16x | 50% | 60–90 FPS |
+| **High-End** (RTX 2060, RX 6600) | 1920x1080 / 1440p | 1.5x | 16x | 75% | 90–120+ FPS |
+| **Enthusiast** (RTX 3070+, RX 6800+) | 1440p / 4K | 2.0x | 16x | 75% | 120+ FPS |
 
 ---
 
