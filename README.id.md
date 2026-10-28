@@ -27,13 +27,13 @@ Runtime PC native berkinerja tinggi dan engine grafis Vulkan untuk **Sengoku Bas
 
 ## Fitur Utama
 
-- **Eksekusi Native x86_64**: Berjalan langsung pada CPU Windows 64-bit modern tanpa overhead mesin virtual atau emulator lambat.
-- **Engine Grafis Vulkan 1.3**: Pipeline grafis modern dengan konsumsi resource rendah dan manajemen swapchain mandiri.
-- **Framerate Terbuka (120+ FPS)**: Present mode dinamis (`eImmediate` / `eMailbox`) membuka batas 60 Hz, sementara target tetap (60/90/120/144 FPS) berjalan presisi dengan frame pacing FIFO.
-- **Kualitas Visual Tinggi**: Fitur supersampling render scale (1.0x hingga 2.0x), ketajaman adaptif AMD RCAS, dan Anisotropic Filtering hingga 16x.
-- **Launcher Premium Samurai**: Tampilan antarmuka satu jendela bertema Crimson & Gold dengan pengaturan grafis terintegrasi dan tooltip interaktif.
-- **Optimalisasi Multi-Thread Co-op**: Prioritas thread render dan audio dinaikkan agar tidak terjadi frame drop saat pertempuran split-screen 2 pemain.
-- **Pemulihan Otomatis Cutscene**: Timer watchdog 3 detik otomatis mendeteksi dan melewati cutscene yang macet tanpa softlock.
+- **Performa Native x86_64**: Berjalan langsung pada PC Windows 64-bit modern tanpa beban emulator atau mesin virtual.
+- **Engine Grafis Vulkan Modern**: Pipeline grafis halus berlatensi rendah dengan kestabilan tinggi.
+- **Framerate Terbuka (120+ FPS)**: Dukungan monitor refresh-rate tinggi tanpa batas 60 FPS, serta frame pacing konsisten untuk target tetap (60, 90, 120, 144 FPS).
+- **Visual Definisi Tinggi**: Fitur supersampling render scale (1.0x hingga 2.0x), ketajaman adaptif AMD RCAS, dan 16x Anisotropic Filtering untuk tekstur yang tajam.
+- **Launcher Premium Samurai**: Antarmuka satu jendela bertema Crimson & Gold dengan pengaturan grafis terintegrasi dan bantuan tooltip.
+- **Pengalaman Co-op 2 Pemain Mulus**: Penjadwalan thread cerdas mencegah micro-stutter dan drop frame saat pertempuran split-screen ramai.
+- **Pemulihan Otomatis Cutscene**: Deteksi macet otomatis yang melanjutkan permainan tanpa softlock atau gangguan.
 
 ---
 

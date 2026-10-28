@@ -27,13 +27,13 @@ A high-performance native PC runtime and Vulkan presentation engine for **Sengok
 
 ## Key Features
 
-- **Native x86_64 Execution**: Direct binary execution on modern 64-bit Windows CPUs without virtual machine overhead.
-- **Vulkan 1.3 Rendering**: Modern low-overhead graphics pipeline with custom swapchain presentation modes.
-- **Framerate Unlocking (120+ FPS)**: Dynamic present modes (`eImmediate` / `eMailbox`) eliminate 60 Hz limits, while fixed targets (60/90/120/144 FPS) run on locked FIFO pacing.
-- **High-Definition Graphics**: Built-in render scale supersampling (1.0x to 2.0x), AMD RCAS contrast adaptive sharpening, and 16x Anisotropic Filtering.
-- **Single-Window Samurai Launcher**: Unified Crimson & Gold launcher with integrated graphics controls, native tooltips, and real-time dependency checks.
-- **Co-op Thread Optimization**: Elevated render/audio worker threads prevent frame drops during intense 2-player local split-screen battles.
-- **Cutscene Stall Recovery**: Integrated 3-second watchdog timer automatically recovers from audio drift without softlocking.
+- **Native x86_64 Performance**: Direct binary execution on modern 64-bit Windows PCs without emulator overhead.
+- **Modern Vulkan Rendering**: Smooth graphics pipeline designed for low latency and high stability.
+- **Framerate Unlocking (120+ FPS)**: High-refresh display support that completely unbinds the 60 FPS lock, with smooth frame pacing for fixed targets (60, 90, 120, 144 FPS).
+- **High-Definition Visuals**: Built-in render scale supersampling (1.0x to 2.0x), AMD RCAS contrast-adaptive sharpening, and 16x Anisotropic Filtering for crystal-clear textures.
+- **Single-Window Samurai Launcher**: Unified Crimson & Gold launcher with integrated graphics controls, native tooltips, and automatic dependency verification.
+- **Seamless Local 2-Player Co-op**: Optimized thread scheduling eliminates micro-stutters and frame drops during intense split-screen battles.
+- **Cutscene Stall Recovery**: Integrated watchdog timer automatically recovers from frozen cutscenes without interrupting your game session.
 
 ---
 
