@@ -60,7 +60,7 @@ constexpr size_t PM_PAGE_SIZE = 4_KB;
 constexpr size_t PM_PAGE_BITS = 12;
 
 namespace {
-/// bbport: write fault sites (guest code), an open-addressing table keyed by the instruction.
+/// engine: write fault sites (guest code), an open-addressing table keyed by the instruction.
 struct FaultSite {
     std::atomic<u64> rip{0};
     std::atomic<u64> caller{0};
@@ -290,7 +290,7 @@ struct PageManager::Impl {
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         NoteFaultSite(context, addr);
-        // bbport: the draw recording thread handles its faults inline too (vk_draw_pipe.h).
+        // engine: the draw recording thread handles its faults inline too (vk_draw_pipe.h).
         const auto is_gpu_thread = rasterizer->IsGpuSideThread();
         if (is_gpu_thread) {
             BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
@@ -457,7 +457,7 @@ struct PageManager::Impl {
 };
 
 #ifdef __linux__
-// bbport: write tracking with userfaultfd write-protection instead of mprotect. mprotect takes
+// engine: write tracking with userfaultfd write-protection instead of mprotect. mprotect takes
 // the address space lock for writing and splits mappings; while guest threads fault on
 // per-frame buffers and the GPU thread re-protects uploaded pages, every page fault in the
 // process (copy threads included) waits for it. UFFDIO_WRITEPROTECT changes page table bits
@@ -615,7 +615,7 @@ struct SignalImpl : public PageManager::Impl {
 
     void Protect(VAddr address, size_t size, Core::MemoryPermission perms) override {
         RENDERER_TRACE;
-        // bbport BB_GUEST_IN_PLACE: no page protection; the pages are marked in the runtime's write
+        // engine BB_GUEST_IN_PLACE: no page protection; the pages are marked in the runtime's write
         // watch instead, and the writers that check it tell the GPU side (WriteTracking).
         if (!VideoCore::WriteTracking()) {
             runtime_memory_set_write_watch(address, size, !True(perms & Core::MemoryPermission::Write));
@@ -634,7 +634,7 @@ struct SignalImpl : public PageManager::Impl {
 
 PageManager::PageManager(Vulkan::Rasterizer* rasterizer_) {
 #ifdef __linux__
-    // bbport: dma-buf guest memory (BB_GUEST_GPU_MEMORY=1) cannot be write-protected by userfaultfd
+    // engine: dma-buf guest memory (BB_GUEST_GPU_MEMORY=1) cannot be write-protected by userfaultfd
     // (anonymous and shmem only): its registration would fail and writes go unseen.
     const char* guest_gpu_memory = std::getenv("BB_GUEST_GPU_MEMORY");
     const bool dma_buf_guest = guest_gpu_memory && guest_gpu_memory[0] == '1';

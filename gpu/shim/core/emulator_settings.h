@@ -1,4 +1,4 @@
-// bbport: shadPS4 settings used by the video core, read once from BB_* environment
+// engine: shadPS4 settings used by the video core, read once from BB_* environment
 // variables (defaults match shadPS4 except the pipeline cache, which is on).
 #pragma once
 #include <algorithm>
@@ -24,10 +24,10 @@ public:
     u32 GetInternalScreenHeight() { static const auto value = u32(Number("BB_INTERNAL_HEIGHT", 1080)); return value; }
     std::string GetPresentMode() { const char* v = std::getenv("BB_PRESENT_MODE"); return v ? v : "Mailbox"; }
     int GetRcasAttenuation() { static const auto value = int(Number("BB_RCAS_ATTENUATION", 250)); return value; }
-    // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
+    // engine: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
     // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
     u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Relaxed)); return value; }
-    // bbport: uncapped presets (run.sh: BB_VBLANK_HZ=480; 0 means the same): vblank runs at
+    // engine: uncapped presets (run.sh: BB_VBLANK_HZ=480; 0 means the same): vblank runs at
     // 480 Hz, and a finished frame is presented as soon as it arrives (IsUncappedVblank), not on
     // the next vblank tick (at the display rate frames alternated 10/20 ms at 100 Hz: judder; at
     // 480 Hz they snap to ~2.1 ms steps). The frame rate is not limited unless BB_FPS_LIMIT

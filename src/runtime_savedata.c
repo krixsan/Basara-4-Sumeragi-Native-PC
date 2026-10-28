@@ -92,7 +92,7 @@ static int valid_name(const char *name, size_t max) {
     for (size_t i=0;i<n;++i) if (name[i]=='/' || name[i]=='\\' || (name[i]=='.' && (i==0 || name[i-1]=='.'))) return 0;
     return 1;
 }
-/* A whole file replaced in one rename (a crash mid-write keeps the old one; bbport 0.5, #64). */
+/* A whole file replaced in one rename (a crash mid-write keeps the old one; engine 0.5, #64). */
 static int write_atomic(const char *path, const void *data, size_t size) {
     char temp[760]; snprintf(temp,sizeof(temp),"%s.bbtmp",path);
     FILE *f=fopen(temp,"wb");

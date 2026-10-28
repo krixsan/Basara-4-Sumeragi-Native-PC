@@ -142,7 +142,7 @@ static ABI int32_t rw_destroy(Rwlock **handle) {
     }
     pthread_mutex_unlock(&registry_lock); return error(e);
 }
-/* SacredFire: the POSIX names (NpToolkit2, online) return the errno itself, not 0x8002xxxx. */
+/* Engine: the POSIX names (NpToolkit2, online) return the errno itself, not 0x8002xxxx. */
 static int32_t posix_error(int32_t e) { return e ? (int32_t)((uint32_t)e & 0xffff) : 0; }
 static ABI int32_t posix_rw_read(Rwlock **r) { return posix_error(rw_read(r)); }
 static ABI int32_t posix_rw_write(Rwlock **r) { return posix_error(rw_write(r)); }

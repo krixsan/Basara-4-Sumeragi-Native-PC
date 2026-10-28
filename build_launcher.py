@@ -5,11 +5,28 @@ import shutil
 import subprocess
 import sys
 
+def convert_icon():
+    src_icon = os.path.join("extracted_game", "app0", "sce_sys", "icon0.png")
+    ico_dest = os.path.join("packaging", "windows", "icons", "basara4.ico")
+    if os.path.isfile(src_icon):
+        try:
+            from PIL import Image
+            img = Image.open(src_icon).convert("RGBA")
+            sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
+            resized = [img.resize(s, Image.Resampling.LANCZOS) for s in sizes]
+            os.makedirs(os.path.dirname(ico_dest), exist_ok=True)
+            resized[0].save(ico_dest, format="ICO", append_images=resized[1:])
+            print(f"[ICON] Successfully converted {src_icon} -> {ico_dest} (LANCZOS multi-res)")
+        except Exception as e:
+            print(f"[ICON ERROR] Failed converting icon: {e}")
+
 def build():
     print("Building Basara4_Launcher.exe with embedded auto-builder...")
+    convert_icon()
     icon = os.path.join("packaging", "windows", "icons", "basara4.ico")
     cmd = [
         sys.executable, "-m", "PyInstaller",
+        "--clean",
         "--onefile",
         "--windowed",
         "--name", "Basara4_Launcher",

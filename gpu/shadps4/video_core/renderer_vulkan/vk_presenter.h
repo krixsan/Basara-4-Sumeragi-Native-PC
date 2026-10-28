@@ -12,6 +12,7 @@
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
+#include "video_core/renderer_vulkan/host_passes/fxaa_pass.h"
 #include "video_core/renderer_vulkan/vk_ctr_framegen.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -40,7 +41,7 @@ struct Frame {
     u64 ready_tick;
     bool is_hdr{false};
     u8 id{};
-    /// SacredFire: frame generation recorded a generated frame to show before this one
+    /// Engine: frame generation recorded a generated frame to show before this one
     /// (CtrFrameGen::OutputImage(id)); set while preparing, read when presenting.
     bool fg_ready{false};
     bool fg_hudless{false}; ///< it had a HUD-less frame (BB_FG_DUMP_TRIGGER dumps)
@@ -117,13 +118,13 @@ private:
 
     void SetExpectedGameSize(s32 width, s32 height);
 
-    /// SacredFire: frame generation for the frame being prepared (after post-processing).
+    /// Engine: frame generation for the frame being prepared (after post-processing).
     void GenerateFrame(Frame* frame, vk::Image hudless);
-    /// SacredFire: the HUD-less display buffer copy (Rasterizer::GetHudless) through the same
+    /// Engine: the HUD-less display buffer copy (Rasterizer::GetHudless) through the same
     /// post-processing as the frame, into a frame-sized image; null when there is none.
     vk::Image PrepareHudless(Frame* frame, VAddr cpu_address, vk::Extent2D image_size,
                              vk::Format view_format);
-    /// SacredFire: presents the generated frame recorded for `frame` (the half-way image
+    /// Engine: presents the generated frame recorded for `frame` (the half-way image
     /// between the previous game frame and this one), before the frame itself. False when it
     /// could not be presented (the frame then goes out alone).
     bool PresentGenerated(Frame* frame);
@@ -139,6 +140,8 @@ private:
     HostPasses::FsrPass::Settings fsr_settings{};
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::PostProcessingPass pp_pass;
+    HostPasses::FxaaPass::Settings fxaa_settings{};
+    HostPasses::FxaaPass fxaa_pass;
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;
     Scheduler draw_scheduler;
@@ -158,7 +161,7 @@ private:
     std::condition_variable_any frame_cv;
     std::vector<VAddr> vo_buffers_addr;
 
-    /// SacredFire: FSR 3.1.6 frame generation (bbport.ini framegen; docs/sacredfire/16-framegen.md).
+    /// Engine: FSR 3.1.6 frame generation (basara.ini framegen; docs/engine/16-framegen.md).
     CtrFrameGen framegen;
     std::chrono::steady_clock::time_point fg_last_prepare{};
     float fg_interval_ms = 16.6f; ///< smoothed time between game frames

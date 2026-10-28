@@ -75,7 +75,7 @@ struct SubmitInfo {
     vk::Fence fence;
     u32 num_wait_semas;
     u32 num_signal_semas;
-    /// bbport: queue operations that go out right before the submission, in queue order (sparse
+    /// engine: queue operations that go out right before the submission, in queue order (sparse
     /// binds): with BB_ASYNC_SUBMIT the submission itself goes out later, on a recording thread.
     std::vector<std::function<void()>> before_submit;
 
@@ -144,13 +144,13 @@ struct DynamicState {
         bool feedback_loop_enabled : 1;
     } dirty_state{};
 
-    /// bbport: increments whenever a new command buffer starts (Invalidate). Rasterizer's
+    /// engine: increments whenever a new command buffer starts (Invalidate). Rasterizer's
     /// vertex/index bind cache uses it to know when the recorded bind state no longer exists.
     [[nodiscard]] u64 Epoch() const noexcept {
         return epoch.load(std::memory_order_acquire);
     }
 
-    /// bbport: invalidate only the vertex/index bind cache. Used when a buffer arena is
+    /// engine: invalidate only the vertex/index bind cache. Used when a buffer arena is
     /// (re)created during a large model/allocation switch; full Invalidate() would also dirty
     /// every pipeline dynamic state for no reason.
     void InvalidateBindCache() noexcept {
@@ -198,7 +198,7 @@ struct DynamicState {
     /// flags that committing clears).
     void Commit(const Instance& instance, const vk::CommandBuffer& cmdbuf);
 
-    /// bbport: passes each dirty state change to `emit` as a small command closure holding only
+    /// engine: passes each dirty state change to `emit` as a small command closure holding only
     /// its own values (recording a copy of the whole state per draw was a hot spot), and clears
     /// the flags it emitted. Flags whose test is disabled stay dirty, as in Commit.
     template <typename Emit>
@@ -365,7 +365,7 @@ struct DynamicState {
         }
     }
 
-    /// bbport: true when Commit() would record anything. Flags that Commit() defers (their
+    /// engine: true when Commit() would record anything. Flags that Commit() defers (their
     /// test is disabled) do not count.
     [[nodiscard]] bool AnyDirty() const noexcept {
         auto pending = dirty_state;
@@ -390,7 +390,7 @@ struct DynamicState {
 
     /// Invalidates all dynamic state to be flushed into the next command buffer.
     void Invalidate() {
-        // bbport: named flags only; padding bits set by a memset made AnyDirty() always true.
+        // engine: named flags only; padding bits set by a memset made AnyDirty() always true.
         dirty_state.viewports = true;
         dirty_state.scissors = true;
         dirty_state.depth_test_enabled = true;
@@ -597,7 +597,7 @@ struct DynamicState {
 
 using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
 
-/// bbport: the command buffer segments of one submission and their chunk counters (guarded by the
+/// engine: the command buffer segments of one submission and their chunk counters (guarded by the
 /// scheduler's recorder_mutex). With BB_ASYNC_SUBMIT several are in flight: a submission goes
 /// out from a recording thread once its segments are recorded.
 struct SubmissionBatch {
@@ -611,7 +611,7 @@ struct SubmissionBatch {
     }
 };
 
-/// bbport: a block of deferred Vulkan commands. Commands are closures placed in
+/// engine: a block of deferred Vulkan commands. Commands are closures placed in
 /// fixed storage (no allocation per command) and run in order on the recording thread.
 class RecordChunk {
 public:
@@ -723,7 +723,7 @@ public:
     /// Sends the current execution context to the GPU and waits for it to complete.
     void Finish();
 
-    /// bbport: waits for the GPU to complete the submissions before the current one, which is
+    /// engine: waits for the GPU to complete the submissions before the current one, which is
     /// not sent: for callers that keep recording into it (the upscaler between CommandBuffer()
     /// and the end of its pass) and free resources only earlier submissions used.
     void WaitSubmittedWork() {
@@ -780,7 +780,7 @@ public:
     /// BB_RECORDER_TRACE=1: prints the most frequent CommandBuffer() callers every 2000 calls.
     static void TraceDirectRecording(void* caller);
 
-    /// bbport: the recording side (current chunks, segments) is used by one thread at a time.
+    /// engine: the recording side (current chunks, segments) is used by one thread at a time.
     /// A second thread inside it at once — or HandOver() entered from inside Record*() on the
     /// same thread (a fault handler) — is reported with both threads' names and this thread's
     /// stack: a null record_chunk/ordered_chunk crashed HandOver and SmallGuestCopy.
@@ -837,7 +837,7 @@ public:
         }
     }
 
-    /// bbport: Record() for a draw, dispatch or pass that runs shaders, between GPU breadcrumbs
+    /// engine: Record() for a draw, dispatch or pass that runs shaders, between GPU breadcrumbs
     /// (vk_breadcrumbs.h): on a GPU hang they say which one never finished.
     template <typename Func>
     void RecordCrumb(const Breadcrumbs::Crumb& crumb, Func&& func) {
@@ -854,7 +854,7 @@ public:
         });
     }
 
-    /// bbport: waits until the submission signalling `tick` is in the queue. Another thread's
+    /// engine: waits until the submission signalling `tick` is in the queue. Another thread's
     /// submission waiting for the tick on the same queue must not go first (BB_ASYNC_SUBMIT
     /// submits from the recording threads): the queue would wait for a later submission.
     void WaitSubmitted(u64 tick) {
@@ -865,7 +865,7 @@ public:
         }
     }
 
-    /// bbport: the breadcrumb stream of this scheduler, for passes recorded on CommandBuffer().
+    /// engine: the breadcrumb stream of this scheduler, for passes recorded on CommandBuffer().
     [[nodiscard]] u32 CrumbStream() const noexcept {
         return crumb_stream;
     }
@@ -910,7 +910,7 @@ public:
     /// command) a long enough segment is cut there, and the next one goes to another thread.
     void KickRecording(bool force = false);
 
-    /// bbport: work that may not span command buffers or render pass instances (an occlusion
+    /// engine: work that may not span command buffers or render pass instances (an occlusion
     /// query, vk_occlusion.h). While one is set, Suspend is called before every boundary (a
     /// render pass beginning or ending, a segment cut, a direct segment, a submission) and Resume
     /// right after it; `inside_render_pass` tells where the commands they record go. Called on
@@ -928,13 +928,13 @@ public:
     /// Waits until every recorded command is in the command buffer.
     void SyncRecording();
 
-    /// bbport: guest memory copies on the recording thread (small ones, RecordHostCopy) or the
+    /// engine: guest memory copies on the recording thread (small ones, RecordHostCopy) or the
     /// copy threads (BbCopy::Async) must be done before the guest learns the GPU is past them
     /// (it may then rewrite the memory, e.g. UI vertices: flickering) and before the
     /// submission that reads them. Waits for all.
     void WaitHostCopies();
 
-    /// bbport: guest memory [address, address + size) a host copy issued now will read (the
+    /// engine: guest memory [address, address + size) a host copy issued now will read (the
     /// source of a deferred upload or rename). WaitHostCopiesFor waits only for these.
     void NoteHostCopySource(u64 address, u64 size);
     /// Waits for the host copies when one of them may still read [address, address + size): a
@@ -954,19 +954,19 @@ public:
         });
     }
 
-    /// bbport: runs `signal` once the guest memory copies issued so far are done, without
+    /// engine: runs `signal` once the guest memory copies issued so far are done, without
     /// waiting here: the recording thread reaches it after the copies queued before it and hands
     /// it to the copy threads' completion (BbCopy::AfterCopies).
     void SignalAfterHostCopies(std::function<void()> signal);
 
-    /// bbport: before a guest-visible write that is not deferred (WriteData, end-of-shader
+    /// engine: before a guest-visible write that is not deferred (WriteData, end-of-shader
     /// fences, flip): waits until every signal handed to SignalAfterHostCopies ran, so that
     /// the write cannot overtake an earlier fence. Otherwise the guest, seeing the later value,
     /// may free memory the earlier fence then writes into (corrupted heap, guest fault).
     void WaitDeferredSignals();
 
     /// Whether a render pass with exactly this state is open.
-    /// bbport: a render pass instance is open in the command stream.
+    /// engine: a render pass instance is open in the command stream.
     [[nodiscard]] bool IsRendering() const noexcept {
         return is_rendering;
     }
@@ -1151,7 +1151,7 @@ private:
     };
     std::queue<PendingOp> pending_ops;
     std::recursive_mutex pending_ops_mutex;
-    u32 pending_polls = 0; // bbport
+    u32 pending_polls = 0; // engine
     std::atomic<u32> num_pending_ops{0}; ///< bbport: pending_ops.size(), checked without the lock
     std::queue<PendingOp> priority_pending_ops;
     std::mutex priority_pending_ops_mutex;
@@ -1159,7 +1159,7 @@ private:
     std::jthread priority_pending_ops_thread;
     RenderState render_state;
     bool is_rendering = false;
-    // bbport: threaded recording. Commands go into chunks of the current segment; segments are
+    // engine: threaded recording. Commands go into chunks of the current segment; segments are
     // recorded in parallel, each into its own command buffer, and a submission runs their
     // command buffers in order. Guest memory copies and fence signals go into ordered chunks,
     // which one recording thread at a time runs in order, each once the commands handed over
@@ -1190,7 +1190,7 @@ private:
     bool ordered_running = false; ///< a thread runs ordered chunks (guarded by recorder_mutex)
     std::vector<std::unique_ptr<RecordChunk>> free_chunks;
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
-    /// bbport: direct_mode in a segment of its own (direct_pool), the recording threads going on
+    /// engine: direct_mode in a segment of its own (direct_pool), the recording threads going on
     /// with the segments before it.
     bool direct_segment = false;
     CarriedScope* carried_scope = nullptr;

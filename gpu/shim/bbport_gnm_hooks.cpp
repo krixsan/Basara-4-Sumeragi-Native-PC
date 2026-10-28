@@ -2,8 +2,8 @@
 #include "bbport_gnm_hooks.h"
 
 #ifdef _WIN32
-// SacredFire (Windows): the libGnm hooks have no function table in SacredFire (it was generated
-// from Bloodborne's executable) and their trampolines use Linux mappings: off on Windows.
+// Engine (Windows): the libGnm hooks have no function table in Engine (it was generated
+// from the engine's executable) and their trampolines use Linux mappings: off on Windows.
 namespace BbGnmHooks {
 void PatchImage(unsigned char*, std::uint64_t) {}
 void CheckSubmission(const std::uint32_t*, std::uint64_t) {}

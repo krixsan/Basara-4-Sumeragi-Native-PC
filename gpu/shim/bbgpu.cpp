@@ -1,6 +1,6 @@
 #include "bbport_write_log.h"
 #include "bbport_gnm_hooks.h"
-// bbport: glue between the C loader and the vendored shadPS4 video core.
+// engine: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
@@ -111,12 +111,12 @@ void MemoryManager::SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
         [](uintptr_t address, uint64_t size) {
             Memory::Instance()->GetRasterizer()->InvalidateMemory(address, size);
         });
-    // bbport: data written into GPU memory by a path the GPU side hears of (file reads, the game's
+    // engine: data written into GPU memory by a path the GPU side hears of (file reads, the game's
     // resource loaders): invalidated, and an asset (it may keep a VRAM copy).
     runtime_memory_set_note_write_hook([](uintptr_t address, uint64_t size) {
         Memory::Instance()->GetRasterizer()->NoteAssetWrite(address, size);
     });
-    // bbport: the game's libc copies (memcpy, memset, memmove) over pages the caches watch.
+    // engine: the game's libc copies (memcpy, memset, memmove) over pages the caches watch.
     runtime_memory_set_cpu_write_hook([](uintptr_t address, uint64_t size) {
         Memory::Instance()->GetRasterizer()->OnCpuWrite(address, size);
     });
@@ -125,7 +125,7 @@ void MemoryManager::InvalidateMemory(VAddr address, u64 size) {
     if (rasterizer) rasterizer->InvalidateMemory(address, size);
 }
 namespace {
-// bbport: the mapped region of the last lookup, per thread, valid for the mapping table generation
+// engine: the mapped region of the last lookup, per thread, valid for the mapping table generation
 // it was read at. The GPU command thread clamps and copies thousands of constant ranges a frame,
 // nearly all within the region of the one before: two calls into the runtime each (~5% of it).
 struct RegionCache {
@@ -187,7 +187,7 @@ static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
     }
 }
 void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
-    // bbport: large uploads (streaming) are split across the copy threads.
+    // engine: large uploads (streaming) are split across the copy threads.
     constexpr u64 Chunk = 512 * 1024;
     if (size < 4 * Chunk || !BbCopy::Enabled()) {
         return CopySparseSerial(source, dest, size);
@@ -334,7 +334,7 @@ extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {
 }
 
 extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
-    // SacredFire issue #2, BB_COPY_PROTECT=1: a write into the read-only copy of a submitted
+    // Engine issue #2, BB_COPY_PROTECT=1: a write into the read-only copy of a submitted
     // command buffer. Reported here; fatal, so that the runtime prints the writer's call chain.
     if (BbClobber::OnFault(ucontext, reinterpret_cast<std::uint64_t>(address))) {
         return 0;

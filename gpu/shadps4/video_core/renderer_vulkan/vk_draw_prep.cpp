@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: speculative draw preparation on worker threads (see vk_draw_prep.h).
+// engine: speculative draw preparation on worker threads (see vk_draw_prep.h).
 
 #include <algorithm>
 #include <chrono>

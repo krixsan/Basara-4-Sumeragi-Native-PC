@@ -1,4 +1,4 @@
-/* SacredFire: libSceJson2 entry points the game imports. The game parses JSON with its own code
+/* Engine: libSceJson2 entry points the game imports. The game parses JSON with its own code
  * and only touches the library's set-up classes: it derives its allocator from
  * sce::Json::MemAllocator (an abstract base: virtual allocate/deallocate/notifyError) and runs
  * sce::Json::Initializer::initialize/terminate with it. The base constructor installs a vtable

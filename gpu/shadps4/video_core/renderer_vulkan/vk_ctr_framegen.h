@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: AMD FSR 3.1.6 frame generation for CTR (docs/sacredfire/16-framegen.md).
+// Engine: AMD FSR 3.1.6 frame generation for the game (docs/engine/16-framegen.md).
 //
 // Runs at flip time on the presenter's finished frame (post-processing done, HUD included;
 // the port's menu and FPS counter are drawn later, on every present). Each real frame is fed
@@ -46,7 +46,7 @@ public:
     CtrFrameGen(const CtrFrameGen&) = delete;
     CtrFrameGen& operator=(const CtrFrameGen&) = delete;
 
-    /// The setting asks for frame generation (bbport.ini framegen, BB_FRAMEGEN) and it has not
+    /// The setting asks for frame generation (basara.ini framegen, BB_FRAMEGEN) and it has not
     /// failed in this session.
     [[nodiscard]] bool Enabled() const;
 

@@ -1,4 +1,4 @@
-// bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+// engine: SDL3 window for the Vulkan swapchain (X11 or Wayland).
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -17,7 +17,7 @@ namespace Frontend {
 
 namespace {
 
-// bbport 0.5 (issue 69): the monitor the window (and fullscreen) goes to. BB_DISPLAY: its number
+// engine 0.5 (issue 69): the monitor the window (and fullscreen) goes to. BB_DISPLAY: its number
 // in SDL's order (1, 2, ...; bb-gpu-capabilities --displays lists them) or a part of its name;
 // without it SDL's primary display. The monitors are logged so a report says which one was taken.
 SDL_DisplayID ChooseDisplay() {
@@ -69,7 +69,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     const SDL_DisplayID display = ChooseDisplay();
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
-    // SacredFire: the window starts at the display buffer's size (3840x2160 with a 4K internal
+    // Engine: the window starts at the display buffer's size (3840x2160 with a 4K internal
     // resolution). Larger than the screen, the window mode had its borders off screen and looked
     // like fullscreen: the windowed size is kept within 80% of the display's usable area.
     SDL_Rect usable{};
@@ -84,7 +84,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
     const char* fullscreen_env = std::getenv("BB_FULLSCREEN");
-    // SacredFire: the setting already folds BB_FULLSCREEN in (Load runs before the window is
+    // Engine: the setting already folds BB_FULLSCREEN in (Load runs before the window is
     // created); the environment is read again here in case it does not.
     const bool fullscreen = (fullscreen_env && fullscreen_env[0] == '1') ||
                             BbSettings::Get().fullscreen.load(std::memory_order_relaxed);
@@ -120,7 +120,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
 }
 
-// sacredfire: a small PNG reader for the window icon (8-bit RGB or RGBA, no interlace; the PS4's
+// engine: a small PNG reader for the window icon (8-bit RGB or RGBA, no interlace; the PS4's
 // icon0.png is 512x512 RGB). The game's files never enter the repository, so the icon is read from
 // the game folder at start. Anything unexpected leaves the default icon.
 static bool ReadPngRgba(const char* path, std::vector<u8>& rgba, int& width, int& height) {
@@ -254,7 +254,7 @@ void WindowSDL::UpdateTextTitle() {
 }
 
 bool WindowSDL::PollEvents() {
-    // SacredFire: the menu's fullscreen switch applies here, on the window thread.
+    // Engine: the menu's fullscreen switch applies here, on the window thread.
     {
         // A failure is logged once per requested state, not on every poll.
         static int failed_for = -1;

@@ -1,4 +1,4 @@
-// bbport: see log.h.
+// engine: see log.h.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

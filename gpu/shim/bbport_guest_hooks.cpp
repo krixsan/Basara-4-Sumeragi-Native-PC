@@ -2,7 +2,7 @@
 #include "bbport_guest_hooks.h"
 
 #ifdef _WIN32
-// SacredFire (Windows): the guest code hooks belong to the PC memory model (BB_GUEST_IN_PLACE),
+// Engine (Windows): the guest code hooks belong to the PC memory model (BB_GUEST_IN_PLACE),
 // which needs dma-buf guest memory: Linux only.
 namespace BbGuestHooks {
 void Install(RangeCallback) {}

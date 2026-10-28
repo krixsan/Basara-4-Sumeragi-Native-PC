@@ -58,13 +58,13 @@ public:
         return *upscaler;
     }
 
-    /// SacredFire: CTR's temporal upscaler (frame generation motion data).
+    /// Engine: the game's temporal upscaler (frame generation motion data).
     [[nodiscard]] CtrFsr3* CtrUpscaler() noexcept {
         return ctr_fsr3.get();
     }
 
-    /// SacredFire: frame generation's HUD-less frame: the display buffer copied right after
-    /// CTR's display pass stretched the scene into it and before its first HUD draw (SHADER_READ_
+    /// Engine: frame generation's HUD-less frame: the display buffer copied right after
+    /// the game's display pass stretched the scene into it and before its first HUD draw (SHADER_READ_
     /// ONLY, the display buffer's format and size). `serial` grows with every capture.
     struct Hudless {
         vk::Image image{};
@@ -83,7 +83,7 @@ public:
 
     void Draw(bool is_indexed, u32 index_offset = 0, const PreparedDraw* prepared = nullptr);
 
-    /// bbport: draw preparation workers (vk_draw_prep.h), fed and consumed by Liverpool.
+    /// engine: draw preparation workers (vk_draw_prep.h), fed and consumed by Liverpool.
     DrawPreparation& GetDrawPreparation() {
         return *draw_prep;
     }
@@ -111,35 +111,35 @@ public:
 
     void FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds);
     void CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds);
-    /// bbport: whether FillBuffer/CopyBuffer into guest memory at `dst` may write it on the CPU
+    /// engine: whether FillBuffer/CopyBuffer into guest memory at `dst` may write it on the CPU
     /// now (otherwise the GPU writes it, in stream order).
     [[nodiscard]] bool DmaMayWriteOnCpu(VAddr dst, u32 num_bytes);
     u32 ReadDataFromGds(u32 gsd_offset);
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
-    /// bbport: data written into GPU memory by a path we hear of (file reads, the game's resource
+    /// engine: data written into GPU memory by a path we hear of (file reads, the game's resource
     /// loaders, DMA on the CPU): invalidated, and an asset for the buffer cache.
     void NoteAssetWrite(VAddr addr, u64 size);
-    /// bbport: the CPU has written [addr, addr + size): invalidated, its bytes kept over GPU data that
+    /// engine: the CPU has written [addr, addr + size): invalidated, its bytes kept over GPU data that
     /// is read back first.
     void InvalidateAfterWrite(VAddr addr, u64 size);
-    /// bbport (any thread): the command processor wrote these bytes outside the command stream
+    /// engine (any thread): the command processor wrote these bytes outside the command stream
     /// (labels, timestamps, occlusion results): VRAM copies of them get them too.
     void NoteLateCommandWrite(VAddr addr, const void* data, u64 size) {
         buffer_cache.NoteLateCommandWrite(addr, data, size);
     }
-    /// bbport: the command processor wrote `size` bytes of `data` at addr with the CPU in decode order
+    /// engine: the command processor wrote `size` bytes of `data` at addr with the CPU in decode order
     /// (WriteData, a constant RAM dump; the decoder reads them there). Where the GPU's own data there
     /// is in VRAM the bytes go into it in stream order, else the caches are invalidated (no write
     /// tracking). `recording_thread`: the draw recording thread, which owns the caches (no drain).
     void NoteCommandWrite(VAddr addr, const void* data, u64 size, bool recording_thread);
-    /// bbport (stage A, BB_CONSTRAM_PIPE, default on): before the command processor writes guest
+    /// engine (stage A, BB_CONSTRAM_PIPE, default on): before the command processor writes guest
     /// memory with the CPU (a constant RAM dump), waits until the recording thread has run the
     /// queued packets that read those bytes (their buffer bindings, DMA), not all of them.
     void WaitForPendingReads(VAddr address, u64 size);
     /// NoteCommandWrite for a write made on stage A: handed to the recording thread in order (a copy
     /// of the bytes) instead of draining it first.
     void NoteCommandWriteInOrder(VAddr addr, const void* data, u64 size);
-    /// bbport: a guest thread wrote [addr, addr + size) with a libc import (memcpy, memset, memmove)
+    /// engine: a guest thread wrote [addr, addr + size) with a libc import (memcpy, memset, memmove)
     /// over pages the caches watch (no write tracking): what a write fault did.
     void OnCpuWrite(VAddr addr, u64 size);
     /// GPU thread, before a write the guest can observe (see Scheduler::WaitHostCopies).
@@ -166,7 +166,7 @@ public:
         scheduler.NoteHostCopySource(address, size);
     }
 
-    /// bbport: GPU command thread: waits until the draw recording thread has recorded every
+    /// engine: GPU command thread: waits until the draw recording thread has recorded every
     /// draw handed to it (vk_draw_pipe.h); no-op on other threads.
     /// `line`/`function`: the caller, for the statistics of where stage A waits.
     void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer, u32 line = __builtin_LINE(),
@@ -207,7 +207,7 @@ public:
     void SignalAfterHostCopies(std::function<void()> signal) {
         scheduler.SignalAfterHostCopies(std::move(signal));
     }
-    /// bbport BB_HONEST_LABELS=1: runs `signal` once the GPU has finished every command recorded
+    /// engine BB_HONEST_LABELS=1: runs `signal` once the GPU has finished every command recorded
     /// before this call (the submission of the current tick), in call order, on a thread that
     /// waits on the work semaphore: fences the guest sees when the work is done, not when it is
     /// recorded. `label` and `value`: the fence it writes (PendingSignalValue).
@@ -215,11 +215,11 @@ public:
     /// Whether signals wait for work not submitted yet (the GPU command thread submits it when
     /// it runs out of work, or the guest could wait for them forever).
     bool HasUnsubmittedSignals();
-    /// bbport BB_GUEST_IN_PLACE (draw recording thread): `data` written into the game's memory by the
+    /// engine BB_GUEST_IN_PLACE (draw recording thread): `data` written into the game's memory by the
     /// GPU in stream order, like the command processor's writes; false when the range is not
     /// bound in place (the caller writes it with the CPU).
     bool WriteGuestMemory(VAddr address, const void* data, u32 size);
-    /// bbport BB_GUEST_IN_PLACE (in stream order: the recording thread): a WRITE_DATA performed by
+    /// engine BB_GUEST_IN_PLACE (in stream order: the recording thread): a WRITE_DATA performed by
     /// the GPU, as the command processor does, instead of a CPU store now (ahead of the GPU work
     /// recorded before it). Values of up to 8 bytes are registered for WAIT_REG_MEM until the GPU
     /// has written them. False: not in place (or BB_GPU_COMMAND_WRITES=0), the caller stores it.
@@ -228,7 +228,7 @@ public:
     /// the last submission is BB_HONEST_FLUSH_US (1000) old: the GPU starts on it as the hardware
     /// would, instead of at the end of the frame, and the guest's mid-frame waits end sooner.
     void SubmitForSignals();
-    /// bbport BB_PIPE_SIGNALS (default on with honest labels; 0: off): on the GPU command thread with
+    /// engine BB_PIPE_SIGNALS (default on with honest labels; 0: off): on the GPU command thread with
     /// the draw pipe, fences, the GPU idle and frame signals and the submissions for them are
     /// handed to the draw recording thread as ordered tasks instead of that thread being drained
     /// first (the GPU command thread waited for it ~15 times a frame and the GPU ran dry meanwhile).
@@ -285,7 +285,7 @@ private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
-    /// bbport: a draw continuing the open render pass with the same inputs gets the same render
+    /// engine: a draw continuing the open render pass with the same inputs gets the same render
     /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
     /// dispatches end it).
     struct BeginSignature {
@@ -373,7 +373,7 @@ private:
     void ForceAnisotropy(AmdGpu::Sampler& sharp, bool is_depth) const;
     void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
                       Shader::Backend::Bindings& binding, u32& write_index);
-    /// bbport: a stage's resolved textures remembered by its prepared T# hashes
+    /// engine: a stage's resolved textures remembered by its prepared T# hashes
     /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
     struct TextureSetEntry {
         VideoCore::ImageId id{}; ///< after the depth redirect; null descriptor when invalid
@@ -416,7 +416,7 @@ private:
     void BindVertexBuffers(const GraphicsPipeline* pipeline,
                            const PreparedDraw* prepared = nullptr);
     void BindIndexBuffer(u32 index_offset = 0);
-    /// bbport: BindVertexBuffers/BindIndexBuffer in two halves: obtaining the buffers
+    /// engine: BindVertexBuffers/BindIndexBuffer in two halves: obtaining the buffers
     /// (vertex_binds, index_bind) and recording the binds.
     void ResolveVertexBuffers(const GraphicsPipeline* pipeline, const PreparedDraw* prepared);
     void EmitVertexBuffers();
@@ -444,16 +444,16 @@ private:
     Common::SharedFirstMutex mapped_ranges_mutex;
     PipelineCache pipeline_cache;
     std::unique_ptr<DrawPreparation> draw_prep;
-    std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
+    std::unique_ptr<CameraMotion> camera_motion; // engine: motion vectors (docs/upscaler.md)
     std::unique_ptr<SceneTargets> scene_targets;
     bool scene_started = false;
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;
     u64 motion_geometry{};    ///< vertex-stream identity of the current direct draw
     bool gbuffer_draw = false;
-    bool ctr_gbuffer_draw = false; ///< SacredFire: CTR's G-buffer pass (vk_ctr_fsr3)
+    bool ctr_gbuffer_draw = false; ///< Engine: the game's G-buffer pass (vk_ctr_fsr3)
     std::unique_ptr<CtrFsr3> ctr_fsr3;
-    std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
+    std::unique_ptr<TemporalUpscaler> upscaler; // engine: FSR (docs/upscaler.md)
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     const bool host_markers_enabled;
@@ -477,11 +477,11 @@ private:
     Pipeline::DescriptorWrites set_writes;
     Shader::PushData push_data;
 
-    // bbport: bindings point at their description instead of copying it (a hot spot): into
+    // engine: bindings point at their description instead of copying it (a hot spot): into
     // image_desc_cache for memoized lookups (pinned for the current BindTextures call), else
     // into image_desc_storage.
     using ImageBindingInfo = std::pair<VideoCore::ImageId, const VideoCore::TextureCache::ImageDesc*>;
-    // bbport: texture descriptions depend only on the T# and three resource flags; building
+    // engine: texture descriptions depend only on the T# and three resource flags; building
     // them (mip layout sizes) for every binding of every draw was a hot spot.
     struct ImageDescCacheEntry {
         std::array<u64, 4> sharp{};
@@ -504,7 +504,7 @@ private:
     boost::container::static_vector<VideoCore::TextureCache::ImageDesc, Shader::NUM_IMAGES * 2>
         image_desc_storage;
     u64 bind_epoch = 0;
-    // bbport: render/depth target lookups memoized by their raw register bytes while image
+    // engine: render/depth target lookups memoized by their raw register bytes while image
     // registrations are unchanged (the descriptions depend only on those registers).
     struct TargetMemo {
         std::array<u8, 256> key{};
@@ -514,7 +514,7 @@ private:
         VideoCore::TextureCache::ImageDesc desc;
     };
     std::array<TargetMemo, 64> target_memo{};
-    // bbport: consecutive draws mostly keep their targets; the slot's description (cb_descs,
+    // engine: consecutive draws mostly keep their targets; the slot's description (cb_descs,
     // db_desc) is then still the right one and is neither looked up nor copied.
     struct LastTarget {
         std::array<u8, 256> key{};
@@ -549,7 +549,7 @@ private:
         VertexInputs<vk::DeviceSize> host_sizes;
         VertexInputs<vk::DeviceSize> host_strides;
         u32 num_buffers = 0;
-        // bbport: last bind actually recorded, valid only in the command-buffer generation it
+        // engine: last bind actually recorded, valid only in the command-buffer generation it
         // was recorded into (scheduler DynamicState::Epoch).
         bool bind_cache_valid = false;
         u64 bind_cache_epoch = ~0ULL;
@@ -578,7 +578,7 @@ private:
         bool pending;
         bool resolved;
     } draw_inputs{};
-    // bbport: textures of a draw bound on the helper thread while this thread binds buffers.
+    // engine: textures of a draw bound on the helper thread while this thread binds buffers.
     static bool BindHelperWanted();
     BindHelper bind_helper{BindHelperWanted()};
     struct TextureTask {
@@ -600,7 +600,7 @@ private:
     bool fault_process_pending{};
     bool attachment_feedback_loop{};
     bool needs_barrier{};
-    // bbport: two-stage draw pipeline (stage B state; the thread is the last member so it
+    // engine: two-stage draw pipeline (stage B state; the thread is the last member so it
     // stops first).
     static inline thread_local const AmdGpu::Regs* stage_regs = nullptr;
     static inline thread_local const AmdGpu::ComputeProgram* stage_cs = nullptr;
@@ -657,14 +657,14 @@ private:
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
     bool scene_debug_frame = false; ///< BB_SCENE_DEBUG: this frame's passes are printed
     bool last_draw_display = false; ///< the previous draw targeted a display buffer
-    /// SacredFire: frame generation's HUD-less copy (GetHudless): due at the second draw of a
+    /// Engine: frame generation's HUD-less copy (GetHudless): due at the second draw of a
     /// display pass, when the first (the scene stretch) is recorded and no HUD draw yet.
     bool hudless_due = false;
     VAddr hudless_address = 0;
     VideoCore::UniqueImage hudless_image;
     Hudless hudless{};
     void CaptureHudless(VideoCore::ImageId display);
-    // SacredFire: FSR 1 in the display pass (bbport.ini fsr1). CTR stretches its finished scene
+    // Engine: FSR 1 in the display pass (basara.ini fsr1). the game stretches its finished scene
     // (the last pass before the display pass) into the larger display buffer and draws the HUD
     // on top; while the display pass samples that image it reads its FSR 1 upscale instead.
     HostPasses::FsrPass display_fsr;
@@ -690,7 +690,7 @@ private:
     };
     std::array<RingStage, Shader::MaxStageTypes> ring_stages{};
     u32 num_ring_stages = 0;
-    /// bbport: the vertex stream V#s of the packet being recorded (stage B; empty elsewhere).
+    /// engine: the vertex stream V#s of the packet being recorded (stage B; empty elsewhere).
     std::span<const AmdGpu::Buffer> packet_vsharps;
     const RingBinding* FindRingBinding(const Shader::Info& stage, u32 index) const {
         for (u32 i = 0; i < num_ring_stages; ++i) {
@@ -718,12 +718,12 @@ private:
         u64 value;
     };
     void GpuSignalLoop(std::stop_token token);
-    /// bbport: GpuSignalLoop has waited 10 s for `tick`: prints whether the GPU or the port is stuck.
+    /// engine: GpuSignalLoop has waited 10 s for `tick`: prints whether the GPU or the port is stuck.
     void GpuWatchdog(u64 tick);
     std::mutex gpu_signals_mutex;
     std::condition_variable_any gpu_signals_cv;
     std::deque<GpuSignal> gpu_signals;
-    /// bbport: signals registered on the draw recording thread since it last handed them over
+    /// engine: signals registered on the draw recording thread since it last handed them over
     /// (PublishSignals: at the end of each guest submission and at every flush), one lock per
     /// batch instead of per fence (~450 fences a frame).
     std::vector<GpuSignal> local_signals;

@@ -144,7 +144,7 @@ std::string TextureCache::DescribeImagesIn(VAddr addr, u64 size) {
 }
 
 void TextureCache::ProcessDownloadImages() {
-    // bbport: called for every fence (~450 a frame): the lock only when something is queued.
+    // engine: called for every fence (~450 a frame): the lock only when something is queued.
     if (!downloads_queued.load(std::memory_order_acquire)) {
         return;
     }
@@ -183,7 +183,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
         .imageOffset = {0, 0, 0},
         .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
     };
-    // bbport BB_GUEST_IN_PLACE: the GPU copies the image into the game's memory itself, in stream
+    // engine BB_GUEST_IN_PLACE: the GPU copies the image into the game's memory itself, in stream
     // order: before the fences that follow, no wait here and no CPU copy afterwards.
     if (GuestInPlace() && image.info.guest_address != 0) {
         const auto [arena, offset] =
@@ -285,7 +285,7 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
     });
 }
 
-// bbport BB_IMAGE_WATCH=addr (diagnostics): how the image at that address is used (first 300).
+// engine BB_IMAGE_WATCH=addr (diagnostics): how the image at that address is used (first 300).
 void TextureCache::WatchImage(const Image& image, const char* what) {
     static const u64 watched = [] {
         const char* env = std::getenv("BB_IMAGE_WATCH");
@@ -303,7 +303,7 @@ void TextureCache::WatchImage(const Image& image, const char* what) {
 
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     std::scoped_lock lock{mutex};
-    // bbport: only an image starting at `address` is affected, so the images over its first byte
+    // engine: only an image starting at `address` is affected, so the images over its first byte
     // are all there is to look at (the whole range was walked for every GPU write binding).
     ForEachImageInRegion(address, 1, [&](ImageId image_id, Image& image) {
         static const bool log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
@@ -445,11 +445,11 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
         }
 
         // The same single-level, single-layer image whose guest size differs only in the
-        // tiler's padding: a pow2 flag that differs, or (SacredFire) the same metadata sized once
+        // tiler's padding: a pow2 flag that differs, or (Engine) the same metadata sized once
         // by the tiler from a texture descriptor (1920x1080 RGBA8 -> 0x7f8000, rows aligned to 8)
         // and once from the colour buffer's slice register (0x870000, macro-tile alignment of 64
-        // rows). The two differ only for heights such as 1080 that are not a multiple of 64 (CTR
-        // in PS4 Pro mode with the 1080p patch); the cached image is the same surface.
+        // rows). The two differ only for heights such as 1080 that are not a multiple of 64;
+        // the cached image is the same surface.
         const bool padding_only =
             image_info.tile_mode == cache_image.info.tile_mode &&
             image_info.size == cache_image.info.size &&
@@ -1364,7 +1364,7 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
-        // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
+        // engine: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
         // much more than images (buffers backing guest memory), and the startup budget left
         // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
         // collector evicted images used two or three frames ago on every submission and wrote
@@ -1386,7 +1386,7 @@ void TextureCache::GarbageCollectImages() {
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
     BbStats::gc_trigger_bytes.store(trigger_gc_memory, std::memory_order_relaxed);
     BbStats::gc_critical_bytes.store(critical_gc_memory, std::memory_order_relaxed);
-    // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64
+    // engine: gc_tick (one per guest submission, hundreds a second) at each of the last 64
     // seconds, for ages in seconds. The usage compared is all of our VRAM, not only images: on a
     // discrete GPU it stays over the trigger, where an age of 16 ticks (~3 frames) evicted every
     // texture briefly off screen and uploaded it again. Below the pressure mark an image goes
@@ -1396,7 +1396,7 @@ void TextureCache::GarbageCollectImages() {
                                .count());
     if (second != gc_second) {
         gc_second = second;
-        // bbport: the driver's budget for our process, once a second: near it the collector evicts
+        // engine: the driver's budget for our process, once a second: near it the collector evicts
         // by submissions (as before 0.5) rather than keeping textures for seconds (NoteVramShort).
         if (instance.CanReportMemoryUsage() && !instance.IsIntegrated()) {
             const u64 budget = instance.GetDeviceMemoryBudgetNow();
@@ -1462,7 +1462,7 @@ void TextureCache::GarbageCollectImages() {
         auto& image = slot_images[image_id];
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
-        // bbport: images that cannot go now (GPU-written: their contents exist only here, and
+        // engine: images that cannot go now (GPU-written: their contents exist only here, and
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
@@ -1473,7 +1473,7 @@ void TextureCache::GarbageCollectImages() {
         }
         --num_deletions;
         if (download) {
-            // bbport: synchronously, while the image still protects its pages. A deferred
+            // engine: synchronously, while the image still protects its pages. A deferred
             // write-back landed after FreeImage had unprotected them, over whatever the game
             // had meanwhile stored there (e.g. its heap after unloading an area).
             DownloadImageMemory(image_id, true);
@@ -1510,7 +1510,7 @@ void TextureCache::GarbageCollectImages() {
         configure(true, true);
         lru_cache.ForEachItemBelow(below_tick, clean_up);
     }
-    // bbport: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).
+    // engine: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).
     if (pressured || gc_downloads != 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now - gc_report_time >= std::chrono::seconds(5)) {

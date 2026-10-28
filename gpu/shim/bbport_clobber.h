@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire issue #2, the clobbered dword: a single dword of a submitted command buffer (a PM4
+// Engine issue #2, the clobbered dword: a single dword of a submitted command buffer (a PM4
 // header, or a shader address register's payload) turns into 1. Always-on, cheap diagnostics
 // that tell where the 1 arrives, and an opt-in trap for a host-side writer:
 //
@@ -61,7 +61,7 @@ bool OnFault(void* ucontext, std::uint64_t address);
 
 /// The bug just showed itself (a bad header, a changed copy, a late label, a trap): once per
 /// run, a message on stderr that names GitHub issue #2 and asks for the log to be attached
-/// to it. The launcher watches for the words "SacredFire issue #2" and shows a notice.
+/// to it. The launcher watches for the words "Engine issue #2" and shows a notice.
 /// BB_ISSUE2_TEST=1 prints it at the first submission (to try the launcher's notice).
 void AskForReport();
 } // namespace BbClobber

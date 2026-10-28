@@ -7,7 +7,7 @@
  *   Enter Options, Tab left touchpad, Backspace right touchpad,
  *   IJKL d-pad (I up, K down, J left, L right).
  *
- * Stick neutral and travel (bbport 0.5, PR 71): SDL exposes no way to read a pad's calibration
+ * Stick neutral and travel: SDL exposes no way to read a pad's calibration
  * and some clones report a biased neutral (a Switch-style pad was seen returning both sticks at a
  * constant ~ +/-16380) and use only part of SDL's -32768..32767 span. The neutral of each axis is
  * taken from a quiet window after the pad opens (SDL returns zero until the first report arrives,
@@ -16,7 +16,7 @@
  * travel, refined by the largest push seen per direction. The stick is then converted as shadPS4
  * does, with an inner/outer dead zone (BB_PAD_DEADZONE, default 5; BB_PAD_DEADZONE_OUTER, default
  * 127). BB_PAD_CENTER=lx,ly,rx,ry overrides the neutral, BB_PAD_CENTER_CAL=0 disables the
- * measurement. SacredFire keeps one calibration per controller port (split screen). */
+ * measurement. The engine keeps one calibration per controller port (split screen). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -73,7 +73,7 @@ _Static_assert(sizeof(ControllerInfo)==28,"OrbisPadControllerInformation layout"
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static int initialized, opened, sdl_ready;
 static SDL_Gamepad *gamepad;
-/* SacredFire: ports 2..4 for split screen: the gamepad named in basara.ini (port.N=), opened while
+/* Controller ports 2..4 for split screen: the gamepad named in basara.ini (port.N=), opened while
  * connected; the game sees user N logged in while the port has its gamepad. Port 1 is `gamepad`.
  * v1.8 auto-join: a port without a port.N= binding claims the first connected gamepad no one
  * else holds as soon as input is seen on it (guests join by pressing buttons); the claim is what
@@ -92,7 +92,6 @@ static const char *get_config_path(void) {
     if (path && path[0]) return path;
     struct stat st;
     if (stat("basara.ini", &st) == 0) return "basara.ini";
-    if (stat("bbport.ini", &st) == 0) return "bbport.ini";
     return "basara.ini";
 }
 
@@ -120,7 +119,7 @@ static void load_ports(void) {
         }
     }
 }
-/* basara.ini/bbport.ini re-read when it changes (the in-game menu writes it); called under lock. */
+/* basara.ini re-read when it changes (the in-game menu writes it); called under lock. */
 static void refresh_ports(uint64_t now) {
     if (now-config_checked<1000000) return;
     config_checked=now;
@@ -141,7 +140,7 @@ static void refresh_ports(uint64_t now) {
 static int is_preferred(SDL_JoystickID id, const char *want);
 static uint64_t now_us(void);
 static int gamepad_active(SDL_Gamepad *g);
-/* SacredFire: the SDL device id is already held by port 1 or another port's pad. */
+/* The SDL device id is already held by port 1 or another port's pad. */
 static int claimed_by_other_port(SDL_JoystickID id, int except) {
     for (int p=1;p<PORTS;++p) if (p!=except && ports[p].want[0] && is_preferred(id,ports[p].want)) return 1;
     return 0;
@@ -481,7 +480,7 @@ static SDL_Gamepad *current_gamepad(void) {
     const uint64_t now=now_us();
     refresh_ports(now);
     const char *want=preferred_gamepad();
-    /* SacredFire: in a container SDL gets no hot-plug notification (no udev), and the Steam Deck
+    /* In a container SDL gets no hot-plug notification (no udev), and the Steam Deck
      * sometimes shows a controller connected after launch only to a fresh enumeration. While the
      * chosen gamepad is missing, port 1 has no pad at all or a named port 2..4 is unfulfilled, the
      * gamepad subsystem is restarted every 5 s, which enumerates devices afresh (open handles are
@@ -587,7 +586,7 @@ static SDL_Gamepad *current_gamepad(void) {
     return gamepad;
 }
 #undef attempts
-/* Controls: what each PS4 input is bound to. Defaults below; bbport.ini (BB_CONFIG) lines
+/* Controls: what each PS4 input is bound to. Defaults below; basara.ini (BB_CONFIG) lines
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
  * a left-side click, touchpad_right), and on the keyboard the sticks: move_* (left), look_*
@@ -730,6 +729,8 @@ static void sample_host_from(PadData *d, SDL_Gamepad *g, int keyboard, PadCal *c
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
     d->orientation[3]=1.0f;
+    /* User 1 ALWAYS reports connected=1, even without physical gamepad (keyboard fallback).
+     * This prevents MT Framework from blocking input waiting for controller connection. */
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
     if (!bindings_ready) { load_bindings(); bindings_ready=1; }
@@ -934,7 +935,13 @@ static void sample(PadData *d) {
 
 static ABI int32_t pad_init(void) {
     LOG_INFO("pad", "scePadInit called (pad subsystem initialized)");
-    pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock);
+    pthread_mutex_lock(&lock);
+    initialized=1;
+    /* Force User 1 (keyboard fallback) to appear as "always connected" even with no physical gamepad.
+     * MT Framework checks connection state before accepting input; connected_count=1 signals that
+     * a controller is present, allowing keyboard input to drive the game from boot. */
+    if (connected_count == 0) connected_count = 1;
+    pthread_mutex_unlock(&lock);
     return 0;
 }
 /* Handles are the user ids: 1 is the player's port, 2..4 the split-screen ports while assigned. */
@@ -992,6 +999,9 @@ static ABI int32_t pad_info(int32_t handle, ControllerInfo *info) {
     memset(info,0,sizeof(*info));
     info->pixel_density=44.86f; info->resolution_x=1920; info->resolution_y=943;
     info->dead_zone_left=info->dead_zone_right=2;
+    /* User 1 ALWAYS reports connected=1 and device_class=0 (STANDARD).
+     * This is critical: MT Framework queries this to verify controller presence before
+     * accepting input. Without this, the game blocks until a physical gamepad connects. */
     info->connection_type=0; info->connected=1; info->device_class=0;
     pthread_mutex_lock(&lock);
     current_gamepad();
@@ -1011,7 +1021,7 @@ static ABI int32_t pad_vibration(int32_t handle, const uint8_t *param) {
 }
 static ABI int32_t pad_ok_handle(int32_t handle) { return handle_open(handle) ? 0 : ERR_INVALID_HANDLE; }
 static ABI int32_t pad_ok_handle_flag(int32_t handle, uint8_t flag) { (void)flag; return pad_ok_handle(handle); }
-/* SacredFire: the DualShock light bar: no host equivalent; a valid handle accepts any colour. */
+/* DualShock light bar: no host equivalent; a valid handle accepts any colour. */
 static ABI int32_t pad_set_light_bar(int32_t handle, const void *color) { if (!color) return ERR_INVALID_ARG; return pad_ok_handle(handle); }
 
 static const RuntimeExport exports[]={

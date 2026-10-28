@@ -78,7 +78,7 @@ struct SwVertexRuntimeInfo {
     bool operator==(const SwVertexRuntimeInfo& other) const noexcept = default;
 };
 
-/// bbport: object motion vectors for temporal upscaling. G-buffer vertex shaders store their
+/// engine: object motion vectors for temporal upscaling. G-buffer vertex shaders store their
 /// clip-space positions per referenced vertex and read the previous frame's; the
 /// fragment shader writes the screen-space difference to an extra color attachment.
 struct MotionVectors {
@@ -111,7 +111,7 @@ struct HwVertexRuntimeInfo {
     bool emulate_depth_negative_one_to_one{};
     bool clip_disable{};
     u32 user_clip_plane_mask{};
-    /// bbport: object motion vectors (G-buffer draws), see MotionVectors below.
+    /// engine: object motion vectors (G-buffer draws), see MotionVectors below.
     bool motion_vectors{};
 
     bool operator==(const HwVertexRuntimeInfo& other) const noexcept = default;
@@ -168,10 +168,10 @@ struct HwGeometryRuntimeInfo {
     std::span<const u32> vs_copy;
     u64 vs_copy_hash;
 
-    // sacredfire: every field the recompiler reads takes part. The ESGS item size
+    // engine: every field the recompiler reads takes part. The ESGS item size
     // (in_vertex_data_size) decides which input vertex a ring slot belongs to
     // (ring_access_elimination.cpp): two specializations that differed only in it compared equal,
-    // and the permutation lookup handed CTR's fur geometry shader a module compiled for the other
+    // and the permutation lookup handed the game's fur geometry shader a module compiled for the other
     // size (fur rendered wrong, in a session and across the on-disk cache). The upstream code also
     // tested `num_invocations && other.num_invocations` instead of comparing them.
     bool operator==(const HwGeometryRuntimeInfo& other) const {
@@ -236,7 +236,7 @@ struct HwFragmentRuntimeInfo {
     bool front_face_all_bits{false};
     bool dual_source_blending{false};
     bool clip_distance_emulation{false};
-    /// bbport: writes the object motion vector to MotionVectors::Output.
+    /// engine: writes the object motion vector to MotionVectors::Output.
     bool motion_vectors{false};
 
     bool operator==(const HwFragmentRuntimeInfo& other) const noexcept {
@@ -258,7 +258,7 @@ struct HwComputeRuntimeInfo {
     std::array<u32, 3> workgroup_size;
     std::array<bool, 3> tgid_enable;
 
-    // sacredfire: the LDS size steers the shared-memory passes, so it is part of the identity.
+    // engine: the LDS size steers the shared-memory passes, so it is part of the identity.
     bool operator==(const HwComputeRuntimeInfo& other) const noexcept {
         return shared_memory_size == other.shared_memory_size &&
                workgroup_size == other.workgroup_size && tgid_enable == other.tgid_enable;

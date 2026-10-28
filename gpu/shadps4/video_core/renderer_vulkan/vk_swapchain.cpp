@@ -38,7 +38,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     height = height_;
     needs_recreation = false;
 
-    // bbport: a minimised window has a 0x0 surface (issue #31); no swapchain can have that extent.
+    // engine: a minimised window has a 0x0 surface (issue #31); no swapchain can have that extent.
     // The old one stays (presents are skipped) until the window is back.
     SetSurfaceProperties();
     if (extent.width == 0 || extent.height == 0) {
@@ -48,7 +48,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     }
     zero_extent = false;
 
-    // bbport: the old swapchain is retired through oldSwapchain instead of destroyed first.
+    // engine: the old swapchain is retired through oldSwapchain instead of destroyed first.
     // NVIDIA's Wayland WSI keeps a wp_tearing_control per swapchain; a fresh swapchain on the
     // same surface was rejected ("Surface already has a tearing controller", SurfaceLost).
     const vk::SwapchainKHR old_swapchain = swapchain;
@@ -223,26 +223,37 @@ void Swapchain::FindPresentMode() {
         return;
     }
 
-    const auto requested_mode = EmulatorSettings.GetPresentMode();
-    if (requested_mode == "Mailbox") {
-        present_mode = vk::PresentModeKHR::eMailbox;
-    } else if (requested_mode == "Fifo") {
-        present_mode = vk::PresentModeKHR::eFifo;
-    } else if (requested_mode == "Immediate") {
-        present_mode = vk::PresentModeKHR::eImmediate;
+    const int limit = BbSettings::Get().fps_limit.load(std::memory_order_relaxed);
+    const auto has_mode = [&](vk::PresentModeKHR m) {
+        return std::ranges::find(modes, m) != modes.cend();
+    };
+
+    if (limit == 0) {
+        // Max FPS / Unlimited: Prioritize Immediate (or Mailbox if Immediate unavailable) to unlock FPS
+        if (has_mode(vk::PresentModeKHR::eImmediate)) {
+            present_mode = vk::PresentModeKHR::eImmediate;
+        } else if (has_mode(vk::PresentModeKHR::eMailbox)) {
+            present_mode = vk::PresentModeKHR::eMailbox;
+        } else {
+            present_mode = vk::PresentModeKHR::eFifo;
+        }
     } else {
-        LOG_ERROR(Render_Vulkan, "Unknown present mode {}, defaulting to Mailbox.",
-                  EmulatorSettings.GetPresentMode());
-        present_mode = vk::PresentModeKHR::eMailbox;
+        // Capped FPS (fps_limit > 0): Use FIFO (V-Sync) for smooth frame pacing
+        if (has_mode(vk::PresentModeKHR::eFifo)) {
+            present_mode = vk::PresentModeKHR::eFifo;
+        } else if (has_mode(vk::PresentModeKHR::eMailbox)) {
+            present_mode = vk::PresentModeKHR::eMailbox;
+        } else {
+            present_mode = modes.empty() ? vk::PresentModeKHR::eFifo : modes.front();
+        }
     }
 
-    if (std::ranges::find(modes, present_mode) == modes.cend()) {
-        // FIFO is guaranteed to be supported by the Vulkan spec.
-        constexpr auto fallback = vk::PresentModeKHR::eFifo;
-        LOG_WARNING(Render, "Requested present mode {} is not supported, falling back to {}.",
-                    vk::to_string(present_mode), vk::to_string(fallback));
-        present_mode = fallback;
-    }
+    const char* mode_name = (present_mode == vk::PresentModeKHR::eImmediate) ? "IMMEDIATE" :
+                            (present_mode == vk::PresentModeKHR::eMailbox)   ? "MAILBOX" :
+                            (present_mode == vk::PresentModeKHR::eFifo)      ? "FIFO" : "OTHER";
+
+    LOG_INFO(Render_Vulkan, "[PERF] Swapchain Present Mode: {} (fps_limit={})", mode_name, limit);
+    std::fprintf(stderr, "[PERF] Swapchain Present Mode: %s (fps_limit=%d)\n", mode_name, limit);
 }
 
 void Swapchain::SetSurfaceProperties() {
@@ -260,7 +271,7 @@ void Swapchain::SetSurfaceProperties() {
     }
 
     // Select number of images in swap chain, we prefer one buffer in the background to work on
-    // SacredFire: frame generation presents two images per game frame: one more to work on.
+    // Engine: frame generation presents two images per game frame: one more to work on.
     const bool framegen = BbSettings::Get().framegen.load() != BbSettings::FrameGenOff;
     image_count = capabilities.minImageCount + (framegen ? 2 : 1);
     if (capabilities.maxImageCount > 0) {

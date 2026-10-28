@@ -76,7 +76,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
-    BbGuestMemory::Install(instance); // bbport: before the runtime maps direct memory
+    BbGuestMemory::Install(instance); // engine: before the runtime maps direct memory
     memory->SetRasterizer(this);
 
     GpuProfiler::Init(instance, scheduler);
@@ -85,7 +85,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
         std::printf("GPU: Multi-Threaded Command Processor active (Two-Stage Pipeline: Thread A Decoder / Thread B Draw Recorder & Submitter)\n");
     }
-    // bbport: this thread joins the texture binding helper before it changes image state.
+    // engine: this thread joins the texture binding helper before it changes image state.
     runtime.SetImageAccessHook(&JoinBindHelper, this);
     scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
         runtime.FlushBarriers();
@@ -322,7 +322,7 @@ void Rasterizer::GpuSignalLoop(std::stop_token token) {
             .pSemaphores = &handle,
             .pValues = &tick,
         };
-        // bbport: a lost device ends the wait with a report (it spun here forever: the game froze
+        // engine: a lost device ends the wait with a report (it spun here forever: the game froze
         // with its sound playing, Steam Deck); 10 s without progress prints what is stuck once.
         const auto wait_start = std::chrono::steady_clock::now();
         bool watched = false;
@@ -415,7 +415,7 @@ bool IsKnownFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
     return d < 256 && n < 256 && tables.first[d] && tables.second[n];
 }
 
-/// SacredFire: a T# whose format pair has no Vulkan format (CTR binds data_format 6 with
+/// Engine: a T# whose format pair has no Vulkan format (the game binds data_format 6 with
 /// num_format 0, 10_11_11 Unorm, in some races) is bound as a null descriptor instead of stopping
 /// the game in SurfaceFormat's assertion (image_info.cpp). IsKnownFormat first: the table lookup
 /// needs valid enum values.
@@ -584,7 +584,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     } else {
         db_desc.first = {};
     }
-    // bbport: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
+    // engine: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
     // main camera (shadow passes bind the same layout with the light's camera).
     gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
     if (gbuffer_draw) {
@@ -592,7 +592,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         camera_motion->OnGBufferPass(db_desc.first, vp.xscale < 0.0f ? -1.0f : 1.0f,
                                      vp.yscale < 0.0f ? -1.0f : 1.0f);
     }
-    // SacredFire: CTR's G-buffer pass (four color targets and the scene depth): the depth and the
+    // Engine: the game's G-buffer pass (four color targets and the scene depth): the depth and the
     // velocity target (color 3) feed FSR 3, and the pass's draws are the scene.
     ctr_gbuffer_draw = std::popcount(key.mrt_mask) == 4 && db_desc.first && cb_descs[3].first &&
                        ctr_fsr3->Enabled();
@@ -612,7 +612,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
     }
-    // bbport: scene color: a full-size RGBA16F target drawn with the scene depth.
+    // engine: scene color: a full-size RGBA16F target drawn with the scene depth.
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
         cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
         const auto& color = texture_cache.GetImage(cb_descs[0].first);
@@ -675,7 +675,7 @@ void Rasterizer::EliminateFastClear() {
     ScopeMarkerEnd();
 }
 
-// bbport: two-stage draw pipeline (vk_draw_pipe.h). Packet layout, 8-byte aligned parts:
+// engine: two-stage draw pipeline (vk_draw_pipe.h). Packet layout, 8-byte aligned parts:
 // DrawPacket, u16 block indices, u32 block words (RegDirty::BlockWords each), then per stage a
 // PacketStage with its user data and flattened user data, then (verification) the full file.
 namespace {
@@ -726,7 +726,7 @@ bool Rasterizer::DrawPipeWanted() {
     if (env && env[0]) {
         return env[0] != '0';
     }
-    // bbport: OFF by default. MT Framework inlines constants and vertex data into the command
+    // engine: OFF by default. MT Framework inlines constants and vertex data into the command
     // stream and can rewrite them while the decode thread is ahead; a second draw-recording
     // thread without full ownership of those inline buffers raced during combat (use-after-free
     // crashes). Single-threaded recording is slower but correct. BB_DRAW_PIPE=1 opts back in.
@@ -739,7 +739,7 @@ bool Rasterizer::UseDrawPipe() const {
 
 bool Rasterizer::OnStageA() const {
 #ifdef _WIN32
-    // bbport (Windows): libc++ compares std::thread::id through winpthreads' pthread_equal,
+    // engine (Windows): libc++ compares std::thread::id through winpthreads' pthread_equal,
     // which asks the kernel (GetThreadId) for both threads: two system calls per check, many
     // per draw. The numeric thread id comes from the TEB.
     return static_cast<u32>(gettid()) == liverpool->GetGpuCommandProcessorThreadId();
@@ -1009,7 +1009,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
             NotePendingRead(indirect->count, sizeof(u32));
         }
     }
-    // bbport: the V#s of the vertex streams, read here from the tables the user data points to:
+    // engine: the V#s of the vertex streams, read here from the tables the user data points to:
     // those tables are what the game's constant engine dumps (a ring of ~25 pages rewritten
     // ~14000 times a second). Read on the recording thread instead, a later dump had often
     // replaced them by then: depth of field drew its passes with another draw's vertices (a
@@ -1434,7 +1434,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     RENDERER_TRACE;
     BbStats::draws.fetch_add(1, std::memory_order_relaxed);
 
-    // bbport: with the draw pipeline this thread only selects the pipeline and hands the draw
+    // engine: with the draw pipeline this thread only selects the pipeline and hands the draw
     // to the recording thread (DrawRecord there); draws FilterDraw handles itself run here.
     const bool pipelined = UseDrawPipe();
     if (pipelined && !FilterDrawPasses() &&
@@ -1475,7 +1475,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
     }
-    // bbport (BB_PREUPLOAD): once a frame, guest GPU memory the CPU wrote and then left alone is
+    // engine (BB_PREUPLOAD): once a frame, guest GPU memory the CPU wrote and then left alone is
     // uploaded ahead of its use, BB_PREUPLOAD_MB (16) at most per frame.
     if (const u32 frame = BbStats::frame_number.load(std::memory_order_relaxed);
         frame != preupload_frame) {
@@ -1488,15 +1488,15 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         buffer_cache.Preupload(budget);
     }
     const auto& regs = Regs();
-    // bbport: the pass copying a finished frame to a display buffer; the previous draw's
+    // engine: the pass copying a finished frame to a display buffer; the previous draw's
     // target is that frame.
-    // SacredFire: CTR draws its HUD straight into the display buffer (dozens of draws); only
-    // the first draw of such a run starts a frame (Bloodborne's display pass is one draw).
+    // Engine: the game draws its HUD straight into the display buffer (dozens of draws); only
+    // the first draw of such a run starts a frame (the engine's display pass is one draw).
     const bool display_draw =
         regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address());
     const bool display_start = display_draw && !last_draw_display;
     last_draw_display = display_draw;
-    // SacredFire: frame generation's HUD-less frame: the display buffer as the first draw of
+    // Engine: frame generation's HUD-less frame: the display buffer as the first draw of
     // the display pass (the scene stretch) left it, copied before the first HUD draw.
     if (display_draw && !display_start && hudless_due) {
         hudless_due = false;
@@ -1549,7 +1549,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                          UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2));
     }
     const PreparedDraw* draw_prepared = bind_prepared;
-    // bbport: vertex and index buffers are resolved while the helper binds textures (their
+    // engine: vertex and index buffers are resolved while the helper binds textures (their
     // commands are recorded after BeginRendering, as before).
     draw_inputs = {pipeline, draw_prepared, index_offset, is_indexed, true, false};
     const bool bound = BindResources(pipeline);
@@ -1576,7 +1576,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         runtime.FlushBarriers();
     }
 
-    // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
+    // engine: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
@@ -1669,7 +1669,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
                                 {buffer_infos.data(), buffer_infos.size()});
     }
-    // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
+    // engine: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
     draw_jitter = {};
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
@@ -1738,7 +1738,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
                               u32 max_count, VAddr count_address, u16 vertex_sgpr_offset,
                               u16 instance_sgpr_offset) {
     RENDERER_TRACE;
-    // bbport: like direct draws, handed to the recording thread after the pipeline selection
+    // engine: like direct draws, handed to the recording thread after the pipeline selection
     // (else the GPU thread waited here for a whole frame of queued draws).
     const bool pipelined = UseDrawPipe() && FilterDrawPasses() &&
                            !BbToggle::Disabled(BbToggle::PipelinedIndirectDraws);
@@ -1812,7 +1812,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         runtime.FlushBarriers();
     }
 
-    // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
+    // engine: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
@@ -1877,7 +1877,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
     BbStats::dispatches.fetch_add(1, std::memory_order_relaxed);
-    // bbport: like draws, handed to the draw recording thread after the pipeline selection.
+    // engine: like draws, handed to the draw recording thread after the pipeline selection.
     const bool pipelined = UseDrawPipe() && !BbToggle::Disabled(BbToggle::PipelinedDispatch);
     if (!pipelined) {
         DrainDrawPipe();
@@ -1963,7 +1963,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
 void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     RENDERER_TRACE;
-    // bbport: handed to the recording thread like direct dispatches.
+    // engine: handed to the recording thread like direct dispatches.
     const bool pipelined = UseDrawPipe() && !BbToggle::Disabled(BbToggle::PipelinedIndirectDraws);
     if (!pipelined) {
         DrainDrawPipe();
@@ -2180,7 +2180,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     set_writes.clear();
     buffer_infos.clear();
     image_infos.clear();
-    // bbport: G-buffer passes sample material textures for a scene rendered below the output
+    // engine: G-buffer passes sample material textures for a scene rendered below the output
     // size; the temporal upscaler restores the detail of the output's mip level (FSR guide:
     // log2(render / output)). Shadows, post-processing and UI keep the guest's bias.
     sampler_lod_bias = 0.0f;
@@ -2235,7 +2235,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
             uses_dma |= stage->uses_dma;
         }
     } else {
-        // bbport: textures on the helper, buffers here. Without mip arrays every stage's
+        // engine: textures on the helper, buffers here. Without mip arrays every stage's
         // descriptors are [buffers][images][samplers], one each, so both sides know their
         // binding numbers and descriptor write slots up front.
         struct BufferStage {
@@ -2310,7 +2310,7 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
 
 void Rasterizer::EmitVertexBuffers() {
     BB_SECTION(EmitVertexBuffers);
-    // bbport: only the used entries go into the recording chunk (the static vectors hold 32 of
+    // engine: only the used entries go into the recording chunk (the static vectors hold 32 of
     // each: ~3 KiB copied per draw).
     auto& v = vertex_binds;
     const bool dynamic_input = instance.IsVertexInputDynamicState();
@@ -2329,7 +2329,7 @@ void Rasterizer::EmitVertexBuffers() {
         return;
     }
 
-    // bbport: consecutive draws usually keep the same vertex streams (soldiers share meshes).
+    // engine: consecutive draws usually keep the same vertex streams (soldiers share meshes).
     // Re-recording vkCmdBindVertexBuffers for them was pure CPU overhead. The cache is only
     // valid for the command buffer the bind was recorded into; DynamicState::Epoch changes at
     // every segment/submission boundary. DrawPipe runs on another thread, so it keeps the old
@@ -2781,7 +2781,7 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
 }
 
 namespace {
-// bbport: BB_TRACE_SHADER=hash[,hash...] (diagnostics) — the buffers those shaders bind: address,
+// engine: BB_TRACE_SHADER=hash[,hash...] (diagnostics) — the buffers those shaders bind: address,
 // size, written or read, where the data is (in place: the game's memory over PCIe on a discrete
 // GPU; VRAM; partly), how often; printed every 5 s.
 void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool written,
@@ -3057,7 +3057,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         const auto& image_desc = stage.images[image_index];
         const auto tsharp =
             prepared ? prepared->image_sharps[image_index] : image_desc.GetSharp(stage);
-        // bbport: a hash lookup per texture per draw for a diagnostic only.
+        // engine: a hash lookup per texture per draw for a diagnostic only.
         static const bool warn_meta = std::getenv("BB_WARN_META_TEXTURE") != nullptr;
         if (warn_meta && texture_cache.IsMeta(tsharp.Address())) {
             LOG_WARNING(Render_Vulkan, "Unexpected metadata read by a shader (texture)");
@@ -3112,7 +3112,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                         int(image_desc.is_written), num_bindings, int(mip_fallback_mode));
         };
         for (auto i = 0; i < num_bindings; i++) {
-            // bbport: a plain binding (no mip override) of the same T# resolves to the same image
+            // engine: a plain binding (no mip override) of the same T# resolves to the same image
             // while no image was registered or unregistered.
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
                 desc_entry.found_generation == texture_cache.RegistryGeneration() &&
@@ -3204,7 +3204,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
 
-            // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
+            // engine: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
             if (binding_proxy_ok[binding_index] && !is_storage && !binding.force_general &&
                 !binding.is_target && !FsrRedirects(image_id) &&
@@ -3257,7 +3257,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             vk::ImageView view = *image_view.image_view;
             vk::ImageLayout layout = image.backing->state.layout;
             if (upscaler->Enabled()) {
-                // bbport: the display pass reads the upscaled frame (scaled presets).
+                // engine: the display pass reads the upscaled frame (scaled presets).
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
             }
             if (FsrRedirects(image_id) && !is_storage && !image.info.props.is_depth) {
@@ -3308,7 +3308,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     BindSamplers(stage, prepared, binding, write_index);
 }
 
-// bbport: the PS4 build samples most scene textures with little or no anisotropic filtering.
+// engine: the PS4 build samples most scene textures with little or no anisotropic filtering.
 // Behind the temporal upscaler the output shows the detail of the output's mip level, and
 // surfaces seen at a grazing angle (stairs, floors, walls along the view) stay blurred.
 // Mipmapped linear samplers of graphics draws get BB_ANISO (16; 0 = the game's) times.
@@ -3485,7 +3485,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     BB_SECTION(BeginRendering);
-    // bbport: RenderStateMemo (see BeginMemo).
+    // engine: RenderStateMemo (see BeginMemo).
     const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
     if (BbStats::enabled && ((begin_memo_hits + begin_memo_misses) & 0x3FFFF) == 0x3FFFF) {
         std::printf("Render state memo: %llu hits, %llu misses; texture sets: %llu hits, %llu "
@@ -3554,7 +3554,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     std::pair<vk::ImageView, vk::ImageLayout> original_color{};
     const auto& regs = Regs();
     const auto& key = pipeline->GetGraphicsKey();
-    // The G-buffer pass starts the scene: 5+ color targets in Bloodborne, 4 in CTR
+    // The G-buffer pass starts the scene: 5+ color targets in the engine, 4 in the game
     // (BB_GBUFFER_MRT, run.py sets it from the game profile).
     static const int gbuffer_mrt = [] {
         const char* env = std::getenv("BB_GBUFFER_MRT");
@@ -3811,7 +3811,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.depth_stencil_attachment = {};
     }
 
-    // bbport: a pass drawn into the upscaler's output-size images (UI, display pass): every
+    // engine: a pass drawn into the upscaler's output-size images (UI, display pass): every
     // attachment must be redirected, viewports and scissors are scaled.
     target_scale = {1.0f, 1.0f};
     if (color_redirected || depth_redirected) {
@@ -3889,7 +3889,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             db_desc.first ? &texture_cache.GetImage(db_desc.first).info : nullptr;
         FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth);
     }
-    // bbport: object motion vector attachment of G-buffer pipelines.
+    // engine: object motion vector attachment of G-buffer pipelines.
     if (key.motion_vectors) {
         object_motion->Attach(state, state.width, state.height);
     }
@@ -3945,7 +3945,7 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
                "FillBuffer address and size must be a multiple of 4 bytes");
     if (!is_gds) {
         texture_cache.ClearMeta(address);
-        // bbport BB_GUEST_IN_PLACE: memory the GPU uses in place is filled by the GPU in stream order
+        // engine BB_GUEST_IN_PLACE: memory the GPU uses in place is filled by the GPU in stream order
         // (a fill on the CPU now would land before earlier draws read the old data). Elsewhere
         // (VRAM copies, unbound memory: shader code, descriptors this thread reads) on the CPU in
         // decode order, as before; the VRAM copy follows through write tracking.
@@ -3983,7 +3983,7 @@ bool Rasterizer::DmaMayWriteOnCpu(VAddr dst, u32 num_bytes) {
 
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
     DrainDrawPipe();
-    // bbport BB_GUEST_IN_PLACE: see FillBuffer (in place: the GPU, in stream order).
+    // engine BB_GUEST_IN_PLACE: see FillBuffer (in place: the GPU, in stream order).
     if (!dst_gds && !buffer_cache.IsAnyInPlace(dst, num_bytes) &&
         !buffer_cache.IsRegionGpuModified(dst, num_bytes)) {
         if (!src_gds && !buffer_cache.IsRegionGpuModified(src, num_bytes) &&
@@ -4253,7 +4253,7 @@ void Rasterizer::UpdateViewportScissorState() const {
             const auto yoffset = vp_ctl.yoffset_enable ? vp.yoffset : 0.f;
             const auto yscale = vp_ctl.yscale_enable ? vp.yscale : 1.f;
 
-            // bbport: sub-pixel jitter of scene geometry for the temporal upscaler; the same
+            // engine: sub-pixel jitter of scene geometry for the temporal upscaler; the same
             // shift as jittering the projection.
             viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
             viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
@@ -4344,7 +4344,7 @@ void Rasterizer::UpdateDepthStencilState() const {
     const bool polygon_offset = regs.polygon_control.enable_polygon_offset_front ||
                                 regs.polygon_control.enable_polygon_offset_back ||
                                 regs.polygon_control.enable_polygon_offset_para;
-    // bbport: Basara renders character and object shadow casters in depth-writing prepasses that
+    // engine: Basara renders character and object shadow casters in depth-writing prepasses that
     // keep a color target bound, so a color mask of zero is not a reliable "shadow pass" marker.
     // Any pass that writes depth can feed the shadow map (depth-only, character prepass, stage
     // caster, decal-free main depth), and all of them get the enforced minimum bias. Passes that
@@ -4375,7 +4375,7 @@ void Rasterizer::UpdateDepthStencilState() const {
         }
 
         float constant = use_back ? regs.poly_offset.back_offset : regs.poly_offset.front_offset;
-        // bbport: use the full slope factor. Dividing it by 16 made the slope-scaled bias 16x
+        // engine: use the full slope factor. Dividing it by 16 made the slope-scaled bias 16x
         // smaller than the guest asked for, which is exactly what left acne on sloped cliffs and
         // ground. Reverse-Z passes (GREATER/GREATER_EQUAL) need the bias pushed the other way.
         float slope = use_back ? regs.poly_offset.back_scale : regs.poly_offset.front_scale;
@@ -4622,7 +4622,7 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
     const auto& display = texture_cache.GetImage(target);
     const vk::Extent2D in{source.info.size.width, source.info.size.height};
     const vk::Extent2D out{display.info.size.width, display.info.size.height};
-    // SacredFire: FSR 3 first (races and other 3D scenes); FSR 1 or the plain stretch otherwise.
+    // Engine: FSR 3 first (races and other 3D scenes); FSR 1 or the plain stretch otherwise.
     if (ctr_fsr3->Enabled()) {
         if (const auto upscaled = ctr_fsr3->Upscale(id, view_format, mapping, out, fsr_layout)) {
             fsr_view = upscaled;

@@ -1,15 +1,15 @@
-/* SacredFire: online play through a private server (docs/sacredfire/15-online.md).
+/* Net: online play through a private server.
  *
  * Off unless BB_ONLINE_SERVER names a server: runtime_net_resolve then answers nothing and
  * runtime_services.c's offline contracts stay (cable unplugged, signed out of PSN).
  *
  * On, with these guarantees:
  *   - every host name the game resolves answers the private server's address: the game's own
- *     servers (Activision's, Sony's) are never looked up and never reached;
+ *     servers (Sony's, publishers') are never looked up and never reached;
  *   - sockets connect and send only to the private server, loopback and the addresses in
  *     BB_ONLINE_ALLOW; anything else is refused and logged;
  *   - HTTP and HTTPS requests go as plain HTTP to the private server's BB_ONLINE_HTTP_PORT
- *     (8080), with the original Host header and X-SacredFire-Scheme (no TLS, no certificates);
+ *     (8080), with the original Host header and X-Basara-Scheme (no TLS, no certificates);
  *   - PSN: local user 1 is signed in under BB_ONLINE_ID (else BB_USER_NAME), with an account
  *     id made from the name and PS Plus granted. Authorization codes and ID tokens are made up
  *     here: they mean something only to the private server, never to Sony.
@@ -1560,7 +1560,7 @@ static ABI int32_t np_auth_code_a(int32_t req,const NpAuthCodeParameterA *param,
     printf("Net: PSN: authorization code for client '%.129s', scope '%s'\n",param->client_id ? param->client_id : "",
            param->scope ? param->scope : "");
     memset(code,0,136);
-    snprintf(code,129,"SACREDFIRE-%s-%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
+    snprintf(code,129,"BASARA-%s-%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
     if (issuer) *issuer=256;
     return request_complete(req,user_signed_in(param->user) ? 0 : NP_SIGNED_OUT);
 }
@@ -1569,7 +1569,7 @@ static ABI int32_t np_id_token_a(int32_t req,const NpAuthTokenParameterA *param,
     printf("Net: PSN: ID token for client '%.129s', scope '%s'\n",param->client_id ? param->client_id : "",
            param->scope ? param->scope : "");
     memset(token,0,4104);
-    snprintf(token,4097,"sacredfire.%s.%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
+    snprintf(token,4097,"basara.%s.%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
     return request_complete(req,user_signed_in(param->user) ? 0 : NP_SIGNED_OUT);
 }
 
@@ -1722,7 +1722,7 @@ static const char *user_agent_of(int id) {
         if (h->user_agent[0]) return h->user_agent;
         id=h->parent;
     }
-    return "SacredFire";
+    return "Basara";
 }
 /* Chunked transfer coding, decoded in place; returns the body's size. */
 static size_t dechunk(char *body,size_t size) {
@@ -1749,7 +1749,7 @@ static ABI int32_t http_send(int id,const void *data,uint64_t size) {
     if (strstr(h->url,"lavender-ps4-auth3") && strstr(path,"/auth/")) dw_test_key_ensure();
     Buffer request={0};
     char line[2048];
-    int n=snprintf(line,sizeof line,"%s %s HTTP/1.1\r\nHost: %s\r\nX-SacredFire-Scheme: %s\r\nUser-Agent: %s\r\nConnection: close\r\n",
+    int n=snprintf(line,sizeof line,"%s %s HTTP/1.1\r\nHost: %s\r\nX-Basara-Scheme: %s\r\nUser-Agent: %s\r\nConnection: close\r\n",
                    h->method,path,host,scheme,user_agent_of(id));
     buffer_add(&request,line,(size_t)(n<(int)sizeof line ? n : (int)sizeof line-1));
     static const char *skip[]={"Host","Connection","Content-Length","User-Agent","Transfer-Encoding"};
@@ -2132,8 +2132,8 @@ static ABI int32_t posix_select(int count,GuestFdSet *read,GuestFdSet *write,Gue
 
 /* ---- PSN services the private server does not offer yet: their calls fail like an
  * unavailable service (cleanup calls succeed), logged once per service, instead of stopping
- * the game. Score, TUS (title user storage), TSS, word filter, Matching2 (PSN rooms; CTR
- * matches through Demonware), bandwidth test, in-game messages, Facebook. ---- */
+ * the game. Score, TUS (title user storage), TSS, word filter, Matching2 (PSN rooms; games
+ * matching through Demonware), bandwidth test, in-game messages, Facebook. ---- */
 typedef struct { const char *prefix, *label; int32_t error; int logged; } Unavailable;
 static Unavailable unavailable[]={
     {"sceNpScore","NpScore (rankings)",(int32_t)0x80550809,0},

@@ -17,7 +17,6 @@ scripts/*
 !scripts/verify_release.py
 !scripts/auto_builder.py
 relinker/
-temp_ctr/
 patches/
 launcher/
 dlss_bridge/
@@ -25,7 +24,6 @@ scratch/
 .gemini/
 .vscode/
 .idea/
-_ref_razz/
 
 # Intermediate compilation files
 *.ninja
@@ -67,7 +65,6 @@ __pycache__/
 *.sh
 *.bat
 *.txt
-bbport.ini
 play_basara.bat
 
 # Allow specific core source folders

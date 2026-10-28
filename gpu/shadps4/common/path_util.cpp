@@ -85,7 +85,7 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 #endif
 
 static auto UserPaths = [] {
-    // bbport: the port keeps GPU caches where BB_GPU_USER_DIR points.
+    // engine: the port keeps GPU caches where BB_GPU_USER_DIR points.
     const char* port_dir = std::getenv("BB_GPU_USER_DIR");
     auto user_dir = port_dir ? std::filesystem::path(port_dir) : std::filesystem::current_path() / PORTABLE_DIR;
     if (!std::filesystem::exists(user_dir)) {
@@ -102,7 +102,7 @@ static auto UserPaths = [] {
             user_dir = std::filesystem::path(getenv("HOME")) / ".local" / "share" / "shadPS4";
         }
 #elif _WIN32
-        // bbport: never shadPS4's %APPDATA% folder (an installed shadPS4 owns it); this runs
+        // engine: never shadPS4's %APPDATA% folder (an installed shadPS4 owns it); this runs
         // before main, so the portable folder is created here (run.py sets BB_GPU_USER_DIR).
         std::filesystem::create_directories(user_dir);
 #endif
@@ -214,7 +214,7 @@ std::optional<fs::path> FindGameByID(const fs::path& dir, const std::string& gam
             }
             return std::nullopt;
         }
-        // bbport: packed (ZArchive) game images are not supported by the port.
+        // engine: packed (ZArchive) game images are not supported by the port.
         return std::nullopt;
     };
 

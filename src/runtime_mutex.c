@@ -9,7 +9,7 @@
 #include <time.h>
 typedef struct { int type; } GuestAttr;
 /* v0.4: destroyed mutexes and condition variables are never freed. Games keep copies of a handle
- * and use or destroy it again after it was destroyed (seen on the European build of CTR: a
+ * and use or destroy it again after it was destroyed (seen on certain guest titles: a
  * trylock and a destroy through freed memory inside winpthreads, an access violation); a dead
  * object answers EINVAL instead, as the PS4 does for a destroyed id. */
 #define LIVE 0x4d757478u /* "Mutx" */

@@ -265,10 +265,10 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         .range = info.guest_size,
     };
     const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
-    // bbport: recorded with copies of the descriptor infos (threaded recording).
+    // engine: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, false), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
-    // bbport: the source may be the arena (BB_PREUPLOAD), which later uploads write: a copy into
+    // engine: the source may be the arena (BB_PREUPLOAD), which later uploads write: a copy into
     // it must wait for this read.
     runtime.AccessBuffer(in_buffer, in_offset, info.guest_size,
                          vk::PipelineStageFlagBits2::eComputeShader,
@@ -330,7 +330,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
         .range = info.guest_size,
     };
     const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
-    // bbport: recorded with copies of the descriptor infos (threaded recording).
+    // engine: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, true), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport BB_SECTIONS=1 (diagnostics): time the draw recording thread spends per part of a draw,
+// engine BB_SECTIONS=1 (diagnostics): time the draw recording thread spends per part of a draw,
 // inclusive (nested parts count in their parent too), printed with the draw pipe statistics.
 #pragma once
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: frame analyzer. Creating the file named by BB_CAPTURE_TRIGGER records the next full
+// engine: frame analyzer. Creating the file named by BB_CAPTURE_TRIGGER records the next full
 // frame: every render pass (targets, depth, draw count, shaders, sampled textures) and compute
 // dispatch, in order, plus the buffer that was presented. Input for placing a temporal
-// upscaler (scene color, depth, motion vectors, UI) in Bloodborne's frame.
+// upscaler (scene color, depth, motion vectors, UI) in the engine's frame.
 
 #pragma once
 

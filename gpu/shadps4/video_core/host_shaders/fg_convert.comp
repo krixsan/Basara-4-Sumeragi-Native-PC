@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: frame generation copy pass (docs/sacredfire/16-framegen.md).
+// Engine: frame generation copy pass (docs/engine/16-framegen.md).
 // FSR 3.1.6 frame generation takes R8G8B8A8_UNORM frames while the presenter's are often
 // BGRA (and sRGB): the frame is read raw through a UNORM view and written to an RGBA8 image,
 // and the generated frame goes back the same way, red and blue swapped for BGRA targets.

@@ -43,7 +43,7 @@ class TextureCache;
 class MemoryTracker;
 class PageManager;
 
-/// bbport: an IntervalList whose every change advances `generation`: lookups of the buffer
+/// engine: an IntervalList whose every change advances `generation`: lookups of the buffer
 /// cache's residency remember their answers for as long as nothing changed (ResidencyMemo).
 template <class IV = Interval>
 class TrackedIntervalList : public IntervalList<IV> {
@@ -65,7 +65,7 @@ public:
 
 class BufferCache {
     static constexpr u64 ADDRESS_SPACE_BITS = 40;
-    // bbport: arena pages are 4 GiB unless the driver's buffer size limit is lower (AMD's
+    // engine: arena pages are 4 GiB unless the driver's buffer size limit is lower (AMD's
     // Windows driver: 2 GiB); an arena spans up to two pages, so they shrink to half the limit.
     static constexpr u64 MAX_ARENA_PAGE_BITS = 32;
     static constexpr u64 MIN_ARENA_PAGE_BITS = 30;
@@ -110,13 +110,13 @@ public:
     /// Invalidates any buffer in the logical page range.
     void InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks = false);
 
-    /// bbport: a guest write fault at `device_addr` was handled; unprotect its neighbourhood.
+    /// engine: a guest write fault at `device_addr` was handled; unprotect its neighbourhood.
     void ExtendWriteFault(VAddr device_addr, u64 guest_rip = 0);
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
 
-    /// bbport: a new draw or dispatch is being recorded: the per-binding housekeeping of
+    /// engine: a new draw or dispatch is being recorded: the per-binding housekeeping of
     /// EnsureResident (unmaps, demotions, assets, late writes) runs once for it, not per binding.
     void NewPacket() noexcept {
         ++packet_epoch;
@@ -130,7 +130,7 @@ public:
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);
 
-    /// bbport BB_GUEST_IN_PLACE: where a command processor write (WRITE_DATA) the GPU performs in
+    /// engine BB_GUEST_IN_PLACE: where a command processor write (WRITE_DATA) the GPU performs in
     /// stream order lands: the arena over the game's memory, if the range is bound there in place.
     /// Not counted as a GPU write of the block (those move blocks to VRAM): it is CPU data, as a PC
     /// game's constant updates. The range counts as GPU-modified until the GPU has done it, so no
@@ -150,48 +150,48 @@ public:
     /// Synchronizes all buffers needed for DMA.
     void SynchronizeDmaBuffers();
 
-    /// bbport (BB_PREUPLOAD): notes a guest mapping or unmapping (Rasterizer::MapMemory): the
+    /// engine (BB_PREUPLOAD): notes a guest mapping or unmapping (Rasterizer::MapMemory): the
     /// game's GPU memory (direct memory of type 3 with GPU access) is pre-uploaded.
     void NotePreuploadMapping(VAddr addr, u64 size, bool mapped);
-    /// bbport (BB_PREUPLOAD): uploads up to `budget` bytes of that memory which the CPU changed and
+    /// engine (BB_PREUPLOAD): uploads up to `budget` bytes of that memory which the CPU changed and
     /// then left alone for a few frames into the arena, ahead of its use (draw recording thread).
     void Preupload(u64 budget);
-    /// bbport (BB_GPU_WRITE_TWINS): forgets the twins of unmapped guest memory.
+    /// engine (BB_GPU_WRITE_TWINS): forgets the twins of unmapped guest memory.
     void DropTwins(VAddr addr, u64 size);
 
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
-    /// bbport BB_GUEST_IN_PLACE: the game unmapped [addr, addr + size) (a guest thread): arena
+    /// engine BB_GUEST_IN_PLACE: the game unmapped [addr, addr + size) (a guest thread): arena
     /// blocks bound to its memory there are unbound before the next binding (GPU side).
     void UnmapInPlace(VAddr addr, u64 size);
     /// Whether the range is bound to the game's own memory (no uploads, tracking or readbacks).
     [[nodiscard]] bool IsInPlace(VAddr addr, u64 size) const;
-    /// bbport BB_GUEST_IN_PLACE without write tracking: [addr, addr + size) gets data through a path
+    /// engine BB_GUEST_IN_PLACE without write tracking: [addr, addr + size) gets data through a path
     /// the GPU side hears of (file reads, the game's resource loaders, DMA): its blocks may then
     /// keep a VRAM copy (any thread).
     void NoteAssetWrite(VAddr addr, u64 size);
-    /// bbport: the game's GPU memory allocator handed out [addr, addr + size) again (any thread): its
+    /// engine: the game's GPU memory allocator handed out [addr, addr + size) again (any thread): its
     /// blocks lose the asset mark and are bound in place, since what writes them next may be code
     /// the GPU side does not hear of.
     void NoteFreshRange(VAddr addr, u64 size);
-    /// bbport, without write tracking: the command processor wrote `data` at addr in decode order.
+    /// engine, without write tracking: the command processor wrote `data` at addr in decode order.
     /// Where the GPU's data there lives in VRAM (GPU-modified, not in place) the same bytes are
     /// written into it in stream order and true is returned; else the caller invalidates.
     bool UpdateGpuWritten(VAddr addr, std::span<const u8> data);
-    /// bbport: copies of [addr, addr + size) in VRAM (ShadowCopy) are stale from here on in stream
+    /// engine: copies of [addr, addr + size) in VRAM (ShadowCopy) are stale from here on in stream
     /// order: the GPU or the command processor wrote there (GPU side thread).
     void DropShadows(VAddr addr, u64 size);
-    /// bbport, without write tracking (any thread): the command processor wrote these bytes into the
+    /// engine, without write tracking (any thread): the command processor wrote these bytes into the
     /// game's memory outside the command stream (labels, timestamps, occlusion results; through
     /// the backing mapping, which nothing sees). Where VRAM holds a copy of them it gets them too, at
     /// the next binding.
     void NoteLateCommandWrite(VAddr addr, const void* data, u64 size);
-    /// bbport, without write tracking (any thread): the CPU wrote [addr, addr + size) next to data
+    /// engine, without write tracking (any thread): the CPU wrote [addr, addr + size) next to data
     /// the GPU keeps in VRAM. Exactly those bytes are copied into VRAM from the game's memory at the
     /// next binding: no readback of the GPU's data, nothing uploaded over it.
     void NotePreciseUpload(VAddr addr, u64 size);
-    /// bbport: the CPU wrote [addr, addr + size) where the GPU side asked to hear of it (no write
+    /// engine: the CPU wrote [addr, addr + size) where the GPU side asked to hear of it (no write
     /// tracking): counted per block like a write fault, for moving per-frame data in place.
     void NoteCpuWriteRange(VAddr addr, u64 size);
     /// Whether any part of the range is.
@@ -229,10 +229,10 @@ private:
     };
     void BindInPlace(u64 start, u64 end, std::vector<ResidentBind>& out, IntervalList<>& rest,
                      bool any_type = false);
-    /// bbport: the housekeeping EnsureResident did before every binding (Process*), once a packet.
+    /// engine: the housekeeping EnsureResident did before every binding (Process*), once a packet.
     void Maintain();
     u64 packet_epoch = 1, maintained_epoch = 0;
-    /// bbport: answers of EnsureResident ("all resident") and IsInPlace for block ranges, valid
+    /// engine: answers of EnsureResident ("all resident") and IsInPlace for block ranges, valid
     /// while resident_ranges and in_place_blocks keep their generation.
     struct ResidencyMemo {
         u64 first = ~0ull, last = 0, generation = 0;
@@ -243,7 +243,7 @@ private:
         return TrackedIntervalList<Backing>::generation + TrackedIntervalList<>::generation;
     }
     void ProcessPendingUnmaps();
-    /// bbport BB_GUEST_IN_PLACE: a write fault (guest thread). Blocks the CPU keeps writing (faults in
+    /// engine BB_GUEST_IN_PLACE: a write fault (guest thread). Blocks the CPU keeps writing (faults in
     /// 3 frames of 60) move from VRAM to the game's memory in place: dynamic data, like an upload
     /// heap; static data stays in VRAM, like a default heap.
     void NoteCpuWrite(VAddr address, u64 guest_rip);
@@ -255,7 +255,7 @@ private:
     /// BB_FRAME_STATS: GPU-written bindings over 64 KiB, reported every 5 s (where they are bound,
     /// which images lie over them).
     void NoteLargeGpuWrite(VAddr addr, u64 size);
-    /// bbport BB_GUEST_IN_PLACE on a discrete GPU, BB_SHADOWS=1 (off by default: 85 copies, 20 MB a
+    /// engine BB_GUEST_IN_PLACE on a discrete GPU, BB_SHADOWS=1 (off by default: 85 copies, 20 MB a
     /// frame in Yahar'gul cost more than reading in place, 48 -> 44 FPS): a read-only binding of data the
     /// CPU writes in place is copied once per submission by the GPU into VRAM and bound there, as a
     /// PC game copies an upload heap into a default heap: one sequential copy over PCIe instead of
@@ -297,9 +297,9 @@ private:
     void QueuePromotions(u64 submitted);
     /// Arena residency memory from the 64 MiB blocks: the memory and the byte offset in it.
     std::pair<vk::DeviceMemory, u64> AllocateResidency(u64 bytes);
-    /// bbport: BbStats::residency_unused_bytes after the free list or the current block changed.
+    /// engine: BbStats::residency_unused_bytes after the free list or the current block changed.
     void NoteResidencyUnused();
-    /// bbport: idle VRAM blocks (see group_use).
+    /// engine: idle VRAM blocks (see group_use).
     void NoteUse(VAddr address, u64 size);
     void ProcessIdleBlocks();
     /// A VRAM slot of a block that left it: reused by the next move to VRAM.
@@ -316,7 +316,7 @@ private:
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);
 
-    /// bbport: batched small copies on the copy threads (BbCopy::QueueCopy).
+    /// engine: batched small copies on the copy threads (BbCopy::QueueCopy).
     static void RunGuestCopy(const BbCopy::Item& item);
     void SmallGuestCopy(const BbCopy::Item& item);
 
@@ -327,7 +327,7 @@ private:
 
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
-    // bbport: texel buffer ranges known not to alias an image, per image registry generation.
+    // engine: texel buffer ranges known not to alias an image, per image registry generation.
     struct ImageMiss {
         VAddr address = 0;
         u32 size = 0;
@@ -371,7 +371,7 @@ private:
         }
     };
     TrackedIntervalList<Backing> resident_ranges;
-    /// bbport BB_GUEST_IN_PLACE: blocks bound to the game's own memory, and guest unmaps to apply.
+    /// engine BB_GUEST_IN_PLACE: blocks bound to the game's own memory, and guest unmaps to apply.
     TrackedIntervalList<> in_place_blocks;
     std::mutex pending_unmaps_mutex;
     std::vector<std::pair<VAddr, u64>> pending_unmaps;
@@ -420,7 +420,7 @@ private:
     vk::DeviceMemory residency_memory{}; ///< bbport: the 64 MiB block arena residency comes from
     u64 residency_size = 0, residency_used = 0;
     std::future<vk::DeviceMemory> spare_residency; ///< the next block, allocated in the background
-    /// bbport: VRAM blocks no longer needed. Per 2 MiB of guest addresses, the second
+    /// engine: VRAM blocks no longer needed. Per 2 MiB of guest addresses, the second
     /// (BbStats::coarse_second) it was last bound: blocks in VRAM unused for BB_VRAM_IDLE_SECONDS
     /// (60, 0: never) go back to the game's memory, and residency chunks left without blocks
     /// go back to the driver (ProcessIdleBlocks). Blocks of unmapped memory leave VRAM too.

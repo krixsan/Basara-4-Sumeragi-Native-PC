@@ -10,7 +10,7 @@ namespace BbSettings {
 
 const char* Spanish(const char* english) {
     static const std::unordered_map<std::string_view, const char*> table = {
-    {"Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###bbport_settings", "Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###bbport_settings"},
+    {"Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###port_settings", "Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###port_settings"},
     {"%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f ms)"},
     {"Off", "Desactivado"},
     {"Output resolution", "Pantalla"},
@@ -39,7 +39,7 @@ const char* Spanish(const char* english) {
     {"DLSS model", "Modelo DLSS"},
     {"Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little heavier. CNN: the older model (preset E), lighter; NVIDIA marks it deprecated. Applies at once.", "Transformer: el modelo actual de NVIDIA (DLSS 4), más nítido y estable, algo más pesado. CNN: el anterior, más ligero. Se aplica al momento."},
     {"FSR 3 sharpness", "Nitidez FSR 3"},
-    {"From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied to the executable at start.", "De patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch); se aplican al arrancar."},
+    {"From patches/the game.xml (illusionyy/PS-Game-Patch), applied to the executable at start.", "De patches/the game.xml (illusionyy/PS-Game-Patch); se aplican al arrancar."},
     {"Changes apply after restarting the game", "Los cambios se aplican al reiniciar el juego"},
     {"Apply and restart game", "Aplicar y reiniciar el juego"},
     {"Controllers (split screen)", "Mandos (pantalla dividida)"},

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: FSR 4 takes its colour as linear light and has no setting for display-encoded input.
+// engine: FSR 4 takes its colour as linear light and has no setting for display-encoded input.
 // The scaled presets feed it the game's tonemapped frame (sRGB-encoded): decoded here into a
 // linear rgba16f image first, and its output encoded again (ENCODE, in place) before the UI
 // composition. FSR 3 and TAA keep the encoded frame (issue #41: only FSR 4 swam on the stairs).

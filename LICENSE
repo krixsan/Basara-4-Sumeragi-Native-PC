@@ -1,0 +1,36 @@
+Sengoku Basara 4 Sumeragi PC Port
+Copyright (C) 2024-2026 krixsan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+This project includes code derived from:
+
+1. shadPS4 (https://github.com/shadps4-emu/shadPS4)
+   License: GPL-2.0-or-later
+   Files: gpu/shadps4/** (Vulkan renderer, shader recompiler, kernel HLE)
+   Modifications: BB port settings, Basara 4 specific patches
+
+2. FFmpeg (https://ffmpeg.org) — LGPL-2.1-or-later, dynamically linked
+3. SDL3, Vulkan, ImGui, miniz, xbyak, sirit, Zydis — see THIRD_PARTY_LICENSES.md
+
+NOT included (user must provide from legal PS4 dump):
+- Game assets (eboot.bin, param.sfo, nativePS4/, sce_sys/)
+- System modules (sce_module/*.sprx)
+- Any Capcom or Sony copyrighted content
+
+Capcom and Sengoku Basara 4 Sumeragi are trademarks of Capcom Co., Ltd.
+PlayStation and PS4 are trademarks of Sony Interactive Entertainment.
+This project is not affiliated with, endorsed by, or sponsored by Capcom or Sony.

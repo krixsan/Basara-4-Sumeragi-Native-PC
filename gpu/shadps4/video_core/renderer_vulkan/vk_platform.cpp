@@ -288,7 +288,7 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
 
     const auto layers = GetInstanceLayers(enable_validation, enable_crash_diagnostic);
     auto extensions = GetLayerExtensions(GetInstanceExtensions(window_type, true), layers);
-    // SacredFire: the instance extensions NVIDIA's DLSS needs (when its bridge is present).
+    // Engine: the instance extensions NVIDIA's DLSS needs (when its bridge is present).
     if (auto* dlss = DlssNgx::Get()) {
         dlss->AppendInstanceExtensions(extensions);
     }

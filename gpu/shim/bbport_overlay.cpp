@@ -59,7 +59,7 @@ namespace {
 std::mutex imgui_mutex; // the ImGui context: window thread (input) and present thread
 bool initialized = false;
 std::atomic<bool> menu_open{false};
-std::atomic<bool> pad_rescan_requested{false}; // SacredFire: the menu's "Rescan controllers"
+std::atomic<bool> pad_rescan_requested{false}; // Engine: the menu's "Rescan controllers"
 bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
@@ -370,7 +370,7 @@ void Hint(const char* text) {
 void Menu() {
     auto& s = BbSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    // Where it was moved last (bbport.ini menu_pos, a fraction of the screen), kept on screen.
+    // Where it was moved last (basara.ini menu_pos, a fraction of the screen), kept on screen.
     ImVec2 pos(viewport->WorkPos.x + 40.0f * base_scale, viewport->WorkPos.y + 40.0f * base_scale);
     if (s.menu_x >= 0.0f && s.menu_y >= 0.0f) {
         const float margin = 80.0f * base_scale;
@@ -382,7 +382,7 @@ void Menu() {
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
     bool keep_open = true;
-    // SacredFire: the menu title.
+    // Engine: the menu title.
     if (!ImGui::Begin(
             BbSettings::MenuText("Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###bbport_settings",
                                  "Sengoku Basara 4 Sumeragi  ·  Insert / L3+R3###bbport_settings"),
@@ -404,7 +404,7 @@ void Menu() {
     ImGui::TextColored(kMenuGrey, BbSettings::MenuText("%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f мс)"),
                        frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg);
 
-    // sacredfire: bbport's temporal upscalers, reactive mask and output scaling read the scene of
+    // engine: the engine's temporal upscalers, reactive mask and output scaling read the scene of
     // the game bbport was built for and stay off here (bbport_settings.cpp); their sections show
     // only with BB_UPSCALER_MENU=1, for experiments.
     static const bool upscaler_menu = std::getenv("BB_UPSCALER_MENU") != nullptr;
@@ -697,8 +697,8 @@ void Menu() {
         "Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает "
         "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
     }
-    // Game patches (patches/CrashTeamRacing.xml): bbport's own game-effect patches went with its
-    // Bloodborne profile (removed 2026-10-09).
+    // Game patches (patches/the game.xml): the engine's own game-effect patches went with its
+    // the engine profile (removed 2026-10-09).
     // v0.4: the menu in tabs, in the launcher's look (ApplyMenuTheme).
     if (!ImGui::BeginTabBar("menu_tabs")) {
         ImGui::End();
@@ -707,7 +707,7 @@ void Menu() {
     const bool picture_tab = ImGui::BeginTabItem(BbSettings::MenuText("Picture", "Изображение"));
     if (picture_tab) {
     MenuSection(BbSettings::MenuText("Resolution and upscaling", "Разрешение и апскейл"));
-    // SacredFire: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox; a
+    // Engine: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox; a
     // DLSS quality mode sets it instead (scripts/patches.py render_plan).
     const bool dlss_sized = s.temporal == BbSettings::TemporalDlss && s.dlss_quality > 0;
     {
@@ -738,7 +738,7 @@ void Menu() {
             "Размер, в котором игра рисует 3D-сцену. Выше 1080p используется режим PS4 Pro, кадр "
             "выводится в 4K; на экране 1080p это сглаживает края. Для 4K нужна мощная видеокарта."));
     }
-    // SacredFire: one upscaler at a time (bbport.ini temporal): FSR 1 (spatial) or the temporal
+    // Engine: one upscaler at a time (basara.ini temporal): FSR 1 (spatial) or the temporal
     // ones, FSR 3, DLSS and FSR 4 (vk_ctr_fsr3). Live; DLSS's quality mode and output need a restart.
     {
         // Labels by setting value (BbSettings::Temporal); the list shows them in `order`.
@@ -764,7 +764,7 @@ void Menu() {
             "FSR 1 увеличивает сцену чётче простого растяжения. FSR 3, FSR 4 и DLSS восстанавливают "
             "детали за несколько кадров. DLSS нужна видеокарта RTX. Применяется сразу."));
     }
-    // SacredFire: frame generation (bbport.ini framegen=off|fsr3): one interpolated frame
+    // Engine: frame generation (basara.ini framegen=off|fsr3): one interpolated frame
     // between each pair of game frames, shown halfway between them. Live.
     {
         static constexpr const char* fg_modes[BbSettings::FrameGenCount] = {
@@ -874,7 +874,7 @@ void Menu() {
 
     ImGui::EndTabItem();
     }
-    // SacredFire: controller ports for split screen. Each port takes one connected gamepad; the
+    // Engine: controller ports for split screen. Each port takes one connected gamepad; the
     // runtime logs the matching user in and reads that pad for it. Port 1 is the player.
     if (ImGui::BeginTabItem(BbSettings::MenuText("Controllers", "Контроллеры"))) {
     MenuSection(BbSettings::MenuText("Controllers (split screen)", "Контроллеры (разделённый экран)"));
@@ -925,7 +925,7 @@ void Menu() {
                                                  "Порты 2-4 входят как Player 2-4, пока подключён их геймпад"));
     }
 
-    // SacredFire: the Steam Deck sometimes shows a controller connected after launch only to a
+    // Engine: the Steam Deck sometimes shows a controller connected after launch only to a
     // fresh enumeration; the runtime restarts SDL's gamepad subsystem on the next input sample.
     if (ImGui::Button(BbSettings::MenuText("Rescan controllers", "Переопознать контроллеры"))) {
         pad_rescan_requested.store(true, std::memory_order_relaxed);
@@ -935,7 +935,7 @@ void Menu() {
     ImGui::EndTabItem();
     }
 
-    // SacredFire: performance (both apply at once).
+    // Engine: performance (both apply at once).
     if (ImGui::BeginTabItem(BbSettings::MenuText("Performance", "Производительность"))) {
     MenuSection(BbSettings::MenuText("Performance", "Производительность"));
     {
@@ -1038,7 +1038,7 @@ void Menu() {
     if (ImGui::Button(BbSettings::MenuText("Close", "Закрыть"))) {
         keep_open = false;
     }
-    // bbport 0.51 (issues 74, 116): leaving the game from the pad (this menu opens with L3+R3). A
+    // engine 0.51 (issues 74, 116): leaving the game from the pad (this menu opens with L3+R3). A
     // second press confirms; the window thread then closes like the window's own close button.
     static bool quit_armed;
     ImGui::SameLine();

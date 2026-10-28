@@ -63,7 +63,7 @@ struct UniqueImage {
         return *this;
     }
 
-    /// bbport: allow_failure is set only for guest texture images, which can fall back to the
+    /// engine: allow_failure is set only for guest texture images, which can fall back to the
     /// 1x1 dummy. Host passes keep the original fatal assert on allocation failure.
     bool Create(const vk::ImageCreateInfo& image_ci, bool allow_failure = false);
 
@@ -146,7 +146,7 @@ struct Image {
 
 public:
     struct BackingImage;
-    // bbport: fields every binding of the image reads, together ahead of the large ImageInfo
+    // engine: fields every binding of the image reads, together ahead of the large ImageInfo
     // (they were spread over several cache lines: one miss each per texture per draw).
     ImageFlagBits flags = ImageFlagBits::Dirty;
     struct {
@@ -170,10 +170,10 @@ public:
     VAddr guest_begin = 0; ///< info.guest_address
     VAddr guest_end = 0;   ///< info.guest_address + info.guest_size
     BackingImage* backing{};
-    /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
+    /// engine: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
     mutable u64 lru_touched_tick = ~0ULL;
     u64 tick_accessed_last{};
-    /// bbport: scheduler tick of the last binding that lets the GPU write it (render or depth target,
+    /// engine: scheduler tick of the last binding that lets the GPU write it (render or depth target,
     /// storage image); 0 never.
     u64 gpu_write_tick{};
     ImageId depth_id{};
@@ -208,7 +208,7 @@ public:
     u64 hash{};
 
 private:
-    /// bbport: replace an unparseable/unsupported image with a valid 1x1 RGBA8 texture.
+    /// engine: replace an unparseable/unsupported image with a valid 1x1 RGBA8 texture.
     /// Keeping a real backing means FindView/GetImage/GetBarriers cannot dereference null.
     void CreateFallback(const Vulkan::Instance& instance);
 

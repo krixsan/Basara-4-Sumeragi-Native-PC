@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SacredFire (Windows, MinGW): AMD's FidelityFX 1.1.4 host sources take MSVC's CRT for granted
+// Engine (Windows, MinGW): AMD's FidelityFX 1.1.4 host sources take MSVC's CRT for granted
 // on _WIN32 (_countof, swprintf_s) and FSR-Vulkan's portability header covers non-Windows only.
 // Force-included into those targets by gpu/CMakeLists.txt.
 #pragma once

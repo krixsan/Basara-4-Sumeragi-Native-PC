@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: object motion vectors for temporal upscaling (docs/ROADMAP.md, step 1).
+// engine: object motion vectors for temporal upscaling (docs/ROADMAP.md, step 1).
 //
 // G-buffer shaders preserve clip positions for the exact indexed range of each draw.
 // Matching includes vertex streams, index contents and base offsets. A missing match falls
@@ -62,7 +62,7 @@ public:
     }
 
 private:
-    /// bbport: a motion image per render-target size. Scenes with G-buffer passes at two sizes
+    /// engine: a motion image per render-target size. Scenes with G-buffer passes at two sizes
     /// (a reduced proxy and the full target) shared one image: every switch recreated it after
     /// a full GPU wait (Scheduler::Finish), twice a frame — ~70% of the draw recording thread's
     /// time and an idle GPU — and threw this frame's vectors away.

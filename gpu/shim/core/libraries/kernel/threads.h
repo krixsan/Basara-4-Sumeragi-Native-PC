@@ -1,4 +1,4 @@
-// bbport: host threads that may call guest code (AvPlayer allocator callbacks).
+// engine: host threads that may call guest code (AvPlayer allocator callbacks).
 // Each thread gets a guest TCB (GS base, TLS) from the C runtime before running.
 #pragma once
 #include <atomic>
@@ -27,7 +27,7 @@ public:
         });
     }
     // A thread may stop its own Thread object (AvPlayer does); it detaches instead of joining.
-    // bbport: these are called from guest code, which a C++ exception cannot unwind: a failed
+    // engine: these are called from guest code, which a C++ exception cannot unwind: a failed
     // join is logged and the thread detached instead.
     void Join() {
         if (!thread.joinable()) return;

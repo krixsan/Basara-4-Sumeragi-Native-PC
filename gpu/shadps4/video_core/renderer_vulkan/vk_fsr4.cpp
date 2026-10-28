@@ -68,7 +68,7 @@ struct Fsr4Upscaler::Impl {
     bool fatal = false;
     u64 next_frame_id = 1;
     std::deque<std::pair<u64, u64>> in_flight; ///< provider frame id, scheduler tick
-    // bbport: FSR 4.1.1 (upscaler=fsr411): the replay of AMD's 4.1.1 DLL (fsr411/).
+    // engine: FSR 4.1.1 (upscaler=fsr411): the replay of AMD's 4.1.1 DLL (fsr411/).
     std::unique_ptr<Fsr411::Upscaler> fsr411;
     std::deque<u64> fsr411_ticks; ///< scheduler ticks of its recent frames (constant ring)
     std::string fsr411_described;
@@ -122,7 +122,7 @@ struct Fsr4Upscaler::Impl {
         const std::string dir = AssetDir() + "/";
         std::array<std::vector<u8>, FFX_FSR4_VK_PASS_COUNT> code;
         std::vector<u8> initializer, weights;
-        // bbport: tools/fsr4_optimize.sh puts fixed or faster passes into opt/ (post through
+        // engine: tools/fsr4_optimize.sh puts fixed or faster passes into opt/ (post through
         // shared memory, pass 11 without out-of-bounds writes); BB_FSR4_OPT=0 keeps the originals.
         const char* opt_env = std::getenv("BB_FSR4_OPT");
         const bool use_opt = !(opt_env && opt_env[0] == '0');
@@ -312,7 +312,7 @@ struct Fsr4Upscaler::Impl {
             Fail("no free provider frame (" + std::to_string(int(begin)) + ")", false);
             return false;
         }
-        // bbport: a frame begun here must reach RetireFrame even when it records nothing,
+        // engine: a frame begun here must reach RetireFrame even when it records nothing,
         // or every later BeginFrame fails (VK_ERROR_VALIDATION_FAILED_EXT).
         const auto abandon = [&] { in_flight.emplace_back(frame_id, scheduler.CurrentTick()); };
         constexpr VkAccessFlags read = VK_ACCESS_SHADER_READ_BIT;

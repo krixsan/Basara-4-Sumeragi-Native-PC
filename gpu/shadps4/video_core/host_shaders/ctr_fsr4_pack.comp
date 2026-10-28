@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: FSR 4 output (display-encoded linear FP16) back into the game's 8-bit
+// Engine: FSR 4 output (display-encoded linear FP16) back into the game's 8-bit
 // frame for the display pass. The ENCODE pass (fsr4_color.comp) applies the sRGB
 // curve in place; this only quantizes into UNORM8.
 #version 450

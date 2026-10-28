@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: camera motion vectors for temporal upscaling (docs/upscaler.md). The scene constants
+// engine: camera motion vectors for temporal upscaling (docs/upscaler.md). The scene constants
 // give the camera of each frame; the previous one is kept here. BB_DEBUG_MOTION=1 blends the
 // motion vectors as colors into the frame before it is copied to the display.
 
@@ -63,7 +63,7 @@ public:
     [[nodiscard]] float Near() const noexcept;
     // Current projection, previous projection, and row Z of previous-view * inverse-view.
     [[nodiscard]] std::array<std::array<float, 4>, 3> TaaDepthParameters() const noexcept;
-    /// bbport: the matrices and jitter of the motion of this frame, printed with an upscaler dump
+    /// engine: the matrices and jitter of the motion of this frame, printed with an upscaler dump
     /// (BB_DUMP_TRIGGER) for offline checks of the vectors.
     void PrintState(int frame) const;
 
@@ -107,7 +107,7 @@ private:
     ObjectMotion* object_motion = nullptr;
     Camera current, previous;
     bool frame_has_camera = false;
-    /// bbport: the camera of the G-buffer pass in progress (OnConstants), committed as the frame's
+    /// engine: the camera of the G-buffer pass in progress (OnConstants), committed as the frame's
     /// camera once per frame (CommitFrameCamera: the motion pass or the display pass).
     Camera pass_camera;
     bool pass_has_camera = false;

@@ -1,4 +1,4 @@
-/* SacredFire: kernel event flags (libkernel sceKernelCreateEventFlag and friends).
+/* Engine: kernel event flags (libkernel sceKernelCreateEventFlag and friends).
  * A flag is a 64-bit pattern with waiters; a waiter asks for a pattern with AND or OR semantics and
  * may clear all bits or its pattern when satisfied. Single-waiter flags (attr 0x10) refuse a second
  * waiter with EPERM; multi-waiter flags (attr 0x20) wake every satisfied waiter in FIFO order.

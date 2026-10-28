@@ -262,7 +262,8 @@ bool PS4_SYSV_ABI sceAvPlayerGetVideoDataEx(AvPlayerHandle handle,
     bool ok = handle->GetVideoData(*video_info);
     static std::atomic<u64> s_video_calls{0};
     u64 count = ++s_video_calls;
-    if (count <= 5 || count % 300 == 0) {
+    // Enhanced diagnostics: log first 5 calls + every 30th call
+    if (count <= 5 || count % 30 == 0) {
         u64 cur_t = handle->CurrentTime();
         std::fprintf(stderr, "[AvPlayer] sceAvPlayerGetVideoDataEx(handle=%p) -> %s (frame_ts=%llu, cur_t=%llu, calls=%llu)\n",
                      (void*)handle, ok ? "OK" : "NO_DATA", ok ? (unsigned long long)video_info->timestamp : 0ULL, (unsigned long long)cur_t, (unsigned long long)count);
@@ -409,7 +410,11 @@ s32 PS4_SYSV_ABI sceAvPlayerResume(AvPlayerHandle handle) {
     if (AvPlayerBypassEnabled()) {
         return ORBIS_OK;
     }
-    return handle->Resume();
+    const s32 res = handle->Resume();
+    if (res != ORBIS_OK) {
+        fprintf(stderr, "[AV_STATE] Resume FAILED — state machine rejected. m_is_paused will stay true. Watchdog should catch this after 5s.\n");
+    }
+    return res;
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerSetAvSyncMode(AvPlayerHandle handle, AvPlayerAvSyncMode sync_mode) {
@@ -491,7 +496,7 @@ s32 PS4_SYSV_ABI sceAvPlayerStop(AvPlayerHandle handle) {
         return ORBIS_OK;
     }
     runtime_audio_stop_movie();
-    // bbport: guest code calls this and cannot unwind a C++ exception.
+    // engine: guest code calls this and cannot unwind a C++ exception.
     try {
         return handle->Stop();
     } catch (const std::exception& error) {

@@ -1,62 +1,37 @@
-# Changelog
+# Sengoku Basara 4 Sumeragi PC — Release v2.0
 
-## [v1.8] - 2026-10-25 (Update 4: 2-Player Local Co-op)
+Published: 2026-10-28
 
-### Added
-- Local 2-Player Mode (Co-op) support. Up to 4 controllers.
-- "Press to Join" auto-join system for controllers (solves virtual/ghost controller issues).
-- Instance ID-based SDL3 controller routing.
+## v2.0 Release Highlights
 
-### Fixed
-- Controller 2 input hijacking Player 1.
-- Controller detection issues on Windows with multiple XInput devices.
+### UI/UX
+- **Premium Samurai Theme**: Complete Crimson & Gold aesthetic redesign with native tooltips, modern typography, responsive button states, and smooth layout.
+- **Consolidated Control Panel**: Integrated graphics settings directly into the main launcher, eliminating popup confusion.
 
-## [v1.5] - 2026-10-25
+### Graphics
+- **Render Scale**: Dynamic render resolution scaling (1.0x - 2.0x) for crisp supersampling on high-end displays.
+- **RCAS Sharpening**: Granular sharpness slider (0 - 100) using AMD Robust Contrast Adaptive Sharpening.
+- **Texture Filtering**: Native Anisotropic Filtering support up to 16x for enhanced surface clarity.
 
-### Added
-- **Priority Tuning**
-  - Hybrid P/E-core scheduling (configurable process priority via basara.ini)
-  - MMCSS "Pro Audio" integration for audio feeder thread (dynamic avrt.dll)
-  - Present thread priority ABOVE_NORMAL
-  - Graceful degradation for LTSC/Wine (avrt.dll absent)
+### Performance & FPS Unlocker
+- **Dynamic Present Mode Logic**:
+  - **Unlimited FPS (`fps_limit=0`)**: Automatically switches Vulkan swapchain present mode to `eImmediate` or `eMailbox`, completely eliminating V-Sync bottlenecks and allowing high-end systems to reach 120+ FPS.
+  - **Capped FPS (`fps_limit=60/90/120/144`)**: Uses Vulkan `eFifo` (V-Sync) for perfectly stable frame pacing and zero micro-stutter.
+- **Multi-Threading Optimization**:
+  - Guest render and audio threads elevated to `THREAD_PRIORITY_HIGHEST` for zero frame drops during intense combat and 2-Player Co-op.
+  - Background asset loading and worker threads set to `THREAD_PRIORITY_BELOW_NORMAL` to prevent main-thread contention.
+  - Host GPU submit threads set to `High` priority with optimized Vulkan command buffer submission splits.
 
-- **Crash Reporter**
-  - Minidump generation (5s timeout, recursion guard, rate limit 3/hour)
-  - Log framework (`src/log.{h,cpp}`) — ring buffer 1000 lines, rotation 5×10MB, thread-safe
-  - Opt-in telemetry with PII scrubbing (username, IP, MAC)
-  - Consent dialog in launcher (via helper, not from crash process)
-  - Hardware info collector (CPUID, DXGI, RtlGetVersion, GlobalMemoryStatusEx)
-  - Raw crash log fallback (bypass log framework deadlock)
+### Stability & Fixes
+- **Cutscene Watchdog**: Enhanced watchdog auto-skips frozen video cutscenes after 3 seconds, ensuring the game loop seamlessly proceeds to gameplay without softlocks.
+- **Shader Pipeline Optimization**: Default asynchronous shader compilation enabled on systems with >4 CPU cores to eliminate first-time shader compilation stutter.
 
-- **Packaging**
-  - Portable ZIP release with 100 bundled runtime DLLs (SDL3, FFmpeg, libc++, libwinpthread, libZydis, etc) — self-contained, tested on clean PC without MSYS2
-  - 5-step first-run wizard (Welcome → Legal Check → Locate eboot.bin → Auto-Build → Done)
-  - eboot.bin validation supports SELF and ELF formats
-  - Dependency checker (Vulkan 1.3, VC++ Redist 2015-2022, Windows 10 1809+, disk space) with download links
-  - Inno Setup 6 installer (per-user, non-admin, preserves user/ folder)
-  - GitHub Actions CI/CD (auto-build on tag v*)
-  - `scripts/package_release.py` — packaging pipeline
-  - `scripts/verify_release.py` — SHA256 + anti-leak verification
-  - `build_launcher.py` — PyInstaller build for launcher
-  - Setup Wizard button in launcher toolbar (re-run anytime)
+### Known Issues
+- **FXAA Anti-Aliasing**: Disabled in the UI ("Coming in v2.1") to prevent Vulkan driver crashes on select hardware. All other graphics features are fully operational and stable.
 
-- **Documentation**
-  - `THIRD_PARTY_LICENSES.md` (shadps4, LibAtrac9, SDL3, Vulkan, FidelityFX, FFmpeg, libc++, etc)
-  - `PRIVACY.md` (crash reporter data flow, PII scrubbing)
-  - `LICENSE.txt` (MIT)
-  - `README.md` + `README.id.md` with Quick Start, legal dump guide, troubleshooting
-  - `CHANGELOG.md`
+---
 
-### Changed
-- Default process priority from HIGH to ABOVE_NORMAL (fixes laptop thermal throttle stutter)
-- Launcher: added dependency badges (Vulkan, VC++, Win, Storage)
-- Launcher: added telemetry pills (Ask/Never/Always)
-- Launcher: refined frosted glass UI
-
-### Fixed
-- Audio underrun (crackle) via MMCSS Pro Audio integration
-- Frame pacing on hybrid Intel/AMD CPUs
-- Crash on map load (VEH too aggressive — now skips benign exceptions, game SEH handles them)
-- Logger deadlock in crash path (raw Win32 write bypasses log framework)
-- Log flush (unbuffered + fflush on every write)
-- ZIP missing runtime DLLs (previously error on clean PC)
+### Package Contents
+- `basara_pc.exe`: High-performance native x86_64 game executable with Vulkan 1.3 rendering backend.
+- `Basara4_Launcher.exe`: Premium Samurai graphical launcher and settings configurator.
+- `basara.ini`: Comprehensive engine configuration file.

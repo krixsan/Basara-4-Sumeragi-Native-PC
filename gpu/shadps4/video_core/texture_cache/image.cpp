@@ -51,7 +51,7 @@ static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
 static vk::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
     switch (type) {
     case AmdGpu::ImageType::Color1D:
-    case AmdGpu::ImageType::Color1DArray: // sacredfire: lowered to 2D, height 1
+    case AmdGpu::ImageType::Color1DArray: // engine: lowered to 2D, height 1
     case AmdGpu::ImageType::Color2D:
     case AmdGpu::ImageType::Color2DMsaa:
     case AmdGpu::ImageType::Color2DArray:
@@ -104,7 +104,7 @@ void UniqueImage::Destroy() {
 bool UniqueImage::Create(const vk::ImageCreateInfo& image_ci, bool allow_failure) {
     this->image_ci = image_ci;
     ASSERT(!image);
-    // bbport: images of BB_VMA_DEDICATED_MB (4) or more get memory of their own, given back to
+    // engine: images of BB_VMA_DEDICATED_MB (4) or more get memory of their own, given back to
     // the driver when they are freed. In shared VMA blocks the texture collector's evictions left
     // holes (~0.9 GB on an RX 7800 XT) that a block only returns once wholly empty.
     static const vk::DeviceSize dedicated_from = [] {
@@ -127,7 +127,7 @@ bool UniqueImage::Create(const vk::ImageCreateInfo& image_ci, bool allow_failure
     VkResult result = VK_SUCCESS;
     VkResult last_failure = VK_SUCCESS;
 
-    // bbport: VMA's budget check, dedicated memory and the driver's allocation can each fail
+    // engine: VMA's budget check, dedicated memory and the driver's allocation can each fail
     // transiently (Windows commit pressure, another process holding VRAM). Retry with fewer
     // constraints before giving up; a fatal assert here took down the whole GPU process on a
     // 1920x1080 video-out image even though 11 GiB of VRAM were free.
@@ -269,7 +269,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     };
     auto image_format_properties =
         instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
-    // bbport: storage usage is speculative (see ImageUsageFlags). Drivers that refuse it for a
+    // engine: storage usage is speculative (see ImageUsageFlags). Drivers that refuse it for a
     // format (AMD's Windows driver for BC6H) get the image without it: creating the unsupported
     // combination anyway loses the device a few frames later.
     if (image_format_properties.result == vk::Result::eErrorFormatNotSupported &&

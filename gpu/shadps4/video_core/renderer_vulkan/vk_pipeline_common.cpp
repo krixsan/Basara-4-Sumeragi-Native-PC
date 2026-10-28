@@ -48,7 +48,7 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
         }
         // Writes and the infos they point to are laid out in the recording chunk, with the
         // pointers already aimed at those copies: the command only carries a span.
-        // bbport: when every write points into the caller's info arrays (draws and
+        // engine: when every write points into the caller's info arrays (draws and
         // dispatches), each array is copied once and the pointers are rebased: a copy per
         // descriptor (two per write) cost the draw recording thread ~3% of its time.
         const auto within = [](const auto* p, u32 count, const auto& array) {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport BB_HEAP_SITES=1 (diagnostics): the game's malloc replacement (the pointers libc.prx calls
+// engine BB_HEAP_SITES=1 (diagnostics): the game's malloc replacement (the pointers libc.prx calls
 // through, libc+0xba190: malloc, free, calloc, realloc, memalign, posix_memalign) is wrapped, and
 // the live allocations are counted per call site in the game (the first two return addresses into
 // its code on the stack). Report() prints the sites whose live bytes grew since the last report:

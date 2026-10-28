@@ -66,7 +66,7 @@ void Semaphore::Wait(u64 tick) {
         .pValues = &tick,
     };
 
-    // bbport: a lost device ends the wait with a report instead of a silent endless loop.
+    // engine: a lost device ends the wait with a report instead of a silent endless loop.
     while (true) {
         const vk::Result result = instance.GetDevice().waitSemaphores(&wait_info, WAIT_TIMEOUT);
         if (result == vk::Result::eSuccess) {

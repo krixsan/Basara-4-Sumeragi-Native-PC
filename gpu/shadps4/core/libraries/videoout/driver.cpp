@@ -877,10 +877,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         const u32 frame_limit = current_limit();
         const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
                                               : std::chrono::nanoseconds(0);
-        // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon
+        // bbport: with a frame limit, uncapped limit (0), or uncapped presets a queued flip is presented as soon
         // as it arrives and its slot allows (no limit: at once), between vblanks, instead of on
         // the next vblank tick.
-        const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
+        const bool immediate_flips = (frame_limit == 0) || (frame_limit != 0) || EmulatorSettings.IsUncappedVblank();
         timer.Start();
         const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
 

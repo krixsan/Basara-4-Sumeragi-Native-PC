@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -20,7 +21,7 @@ const char* Path() {
     if (env && env[0]) return env;
     std::error_code ec;
     if (std::filesystem::exists("basara.ini", ec)) return "basara.ini";
-    if (std::filesystem::exists("bbport.ini", ec)) return "bbport.ini";
+    if (std::filesystem::exists("basara.ini", ec)) return "basara.ini";
     return "basara.ini";
 }
 
@@ -127,6 +128,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         for (int r = 0; r < RenderResCount; ++r) {
             if (i == RenderResHeights[r]) v.render_res = r;
         }
+    } else if (key == "render_scale") {
+        float scale = std::stof(value);
+        v.render_scale = std::clamp(scale, 0.5f, 2.0f);
+    } else if (key == "anti_aliasing") {
+        if (value == "off") v.anti_aliasing = 0;
+        else if (value == "fxaa") v.anti_aliasing = 1;
+        else if (value == "msaa2") v.anti_aliasing = 2;
+        else if (value == "msaa4") v.anti_aliasing = 4;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
@@ -141,6 +150,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         if (value == "21:9" || value == "21x9") v.aspect_ratio = 1;
         else if (value == "32:9" || value == "32x9") v.aspect_ratio = 2;
         else v.aspect_ratio = 0;
+    } else if (key == "performance_mode") {
+        v.performance_mode = i != 0;
     } else {
         for (int e = 0; e < EffectCount; ++e) {
             if (key == Effects[e].key) {
@@ -177,7 +188,9 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    // bbport: the menu's language until one is chosen in it (menu_language in bbport.ini): the
+    // Default async_pipelines to true on systems with more than 4 cores to prevent shader stutter
+    v.async_pipelines = (std::thread::hardware_concurrency() > 4);
+    // engine: the menu's language until one is chosen in it (menu_language in basara.ini): the
     // launcher's (BB_MENU_LANGUAGE), else the system's, as the launcher picks its own.
     {
         const char* lang = std::getenv("BB_MENU_LANGUAGE");
@@ -215,8 +228,8 @@ void Load() {
         else if (!std::strncmp(lang, "ru", 2)) v.menu_language = MenuLanguage::Russian;
         else if (!std::strncmp(lang, "en", 2)) v.menu_language = MenuLanguage::English;
     }
-    // SacredFire: bbport's temporal upscalers and object motion vectors read the scene of the game
-    // bbport was built for (its render targets, constants and vertex streams), not this one; they
+    // Engine: the engine's temporal upscalers and object motion vectors read the scene of the game
+    // engine was built for (its render targets, constants and vertex streams), not this one; they
     // stay off. BB_UPSCALER / BB_OBJECT_MOTION below still turn them on for experiments.
     v.upscaler = UpscalerOff;
     v.object_motion = false;
@@ -239,7 +252,7 @@ void Load() {
             Set(v, key, value);
         }
     }
-    // SacredFire: BB_FULLSCREEN=1 starts fullscreen; the menu toggles it later (window.cpp
+    // Engine: BB_FULLSCREEN=1 starts fullscreen; the menu toggles it later (window.cpp
     // applies the setting on the window thread, so the checkbox takes effect at once).
     if (!v.temporal_seen) {
         v.temporal = v.legacy_fsr3 ? TemporalFsr3 : v.legacy_fsr1 == 0 ? TemporalOff : TemporalFsr1;
@@ -272,6 +285,20 @@ void Load() {
     v.startup_output_res = v.output_res;
     v.startup_aspect_ratio = v.aspect_ratio;
     v.startup_live_resolution = v.live_resolution;
+    
+    // v2.1: Performance mode suggests 720p but respects user override
+    if (v.performance_mode && v.render_res < 0) {
+        v.render_res = 1;  // Index 1 = 720p - only default, not forced
+        v.startup_render_res = 1;
+        std::printf("Settings: Performance Mode defaults to 720p (override with render_res= in config)\n");
+    } else if (v.performance_mode) {
+        std::printf("Settings: Performance Mode active but render_res=%d honored\n", 
+                    v.render_res >= 0 ? RenderResHeights[v.render_res] : -1);
+    }
+
+    if (!v.async_pipelines.load()) {
+        std::printf("[PERF] WARNING: async_pipelines is OFF. This WILL cause shader stutter.\n");
+    }
 }
 
 bool RenderSizeNeedsRestart() {
@@ -375,6 +402,15 @@ void Save() {
     }
     put("model_lod", std::to_string(v.model_lod.load()));
     if (v.render_res >= 0) put("render_res", std::to_string(RenderResHeights[v.render_res]));
+    if (v.render_scale != 1.0f) {
+        char scale_str[32];
+        std::snprintf(scale_str, sizeof(scale_str), "%.1f", v.render_scale.load());
+        put("render_scale", scale_str);
+    }
+    const char* aa_str = v.anti_aliasing == 0 ? "off" :
+                         v.anti_aliasing == 1 ? "fxaa" :
+                         v.anti_aliasing == 2 ? "msaa2" : "msaa4";
+    put("anti_aliasing", aa_str);
     put("temporal", TemporalNames[std::clamp(v.temporal.load(), 0, TemporalCount - 1)]);
     put("dlss_quality", DlssQualityNames[std::clamp(v.dlss_quality.load(), 0, DlssQualityCount - 1)]);
     put("dlss_output", std::to_string(DlssOutputHeights[v.dlss_output ? 1 : 0]));

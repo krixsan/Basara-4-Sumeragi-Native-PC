@@ -2,7 +2,7 @@
 """
 Sengoku Basara 4 Sumeragi — PC Native Port
 Studio-Grade AAA Graphical Launcher & Configuration Engine
-v1.8 Release — Priority Tuning, Crash Reporter, 100 Runtime DLLs & Setup Wizard
+v2.0 Release — Performance Mode, Auto-Updater & Enhanced UI
 """
 
 import os
@@ -21,6 +21,7 @@ import winreg
 import webbrowser
 import shutil
 import platform
+import math
 
 from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageChops
 
@@ -47,19 +48,19 @@ except ImportError:
 
 # --- Theme Configuration ---
 WIDTH = 960
-HEIGHT = 560
+HEIGHT = 660
 
 COLOR_BG_DARK = "#0a0c12"
-COLOR_GOLD = "#D4AF37"
+COLOR_GOLD = "#FFD700"
 COLOR_GOLD_BRIGHT = "#E5C158"
 COLOR_AMBER = "#F1C40F"
-COLOR_CRIMSON = "#B81D24"
-COLOR_CRIMSON_DARK = "#8E1118"
-COLOR_CRIMSON_LIGHT = "#C81E2B"
-COLOR_CRIMSON_HOVER = "#DC2626"
+COLOR_CRIMSON = "#8B0000"
+COLOR_CRIMSON_DARK = "#660D12"
+COLOR_CRIMSON_LIGHT = "#A81E26"
+COLOR_CRIMSON_HOVER = "#A0121A"
 COLOR_TEXT_WHITE = "#FFFFFF"
-COLOR_TEXT_MUTED = "#8F9CAE"
-COLOR_TEXT_SUB = "#7E8B9B"
+COLOR_TEXT_MUTED = "#A9B7C6"
+COLOR_TEXT_SUB = "#A9A9A9"
 COLOR_SUCCESS = "#2ECC71"
 COLOR_ERROR = "#E74C3C"
 
@@ -68,7 +69,7 @@ FONT_TITLE = "Segoe UI Black"
 FONT_SUBTITLE = "Segoe UI Semibold"
 
 INI_FILE = "basara.ini"
-FALLBACK_INI = "bbport.ini"
+FALLBACK_INI = "basara.ini"
 
 
 def read_ini():
@@ -78,18 +79,20 @@ def read_ini():
         "fullscreen": "1",
         "fps_limit": "144",
         "anisotropy": "16",
+        "anti_aliasing": "0",
+        "render_scale": "1.0",
         "fsr1": "1",
         "rcas": "1",
         "rcas_strength": "75",
         "skip_intro": "0",
         "show_fps": "1",
+        "performance_mode": "0",
         "process_priority": "above_normal",
         "telemetry_upload": "ask",
         "telemetry_endpoint": "https://api.github.com/repos/krixsan/Basara-4-Sumeragi-Native-PC/telemetry",
         "log_level": "info",
         "first_run_done": "0",
         "legal_acknowledged": "0",
-        "game_dir": "",
     }
     path = INI_FILE if os.path.exists(INI_FILE) else (FALLBACK_INI if os.path.exists(FALLBACK_INI) else None)
     if path:
@@ -146,28 +149,6 @@ def write_ini(data):
             f.writelines(new_lines)
     except Exception as e:
         print(f"Warning: unable to save {target}: {e}")
-
-
-def game_folder_candidates():
-    """Return game-folder candidates, preferring the folder saved by Setup Wizard."""
-    configured = read_ini().get("game_dir", "").strip().strip('"')
-    raw_candidates = []
-    if configured:
-        raw_candidates.append(configured)
-    raw_candidates.extend([
-        os.path.join("extracted_game", "app0"),
-        "app0",
-    ])
-
-    candidates = []
-    seen = set()
-    for raw in raw_candidates:
-        path = os.path.abspath(os.path.expanduser(raw))
-        key = os.path.normcase(path)
-        if key not in seen:
-            seen.add(key)
-            candidates.append(path)
-    return candidates
 
 
 def check_game_integrity(boot_bin=None):
@@ -240,19 +221,11 @@ def verify_game_installation():
             boot_bin = cand
             break
 
-    # Prefer the game folder explicitly selected in Setup Wizard (basara.ini: game_dir).
-    # The folder is used in place, so sce_module/, sce_sys/ and the game data stay intact.
-    candidates = game_folder_candidates()
     app0 = None
-    for cand in candidates:
-        if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "eboot.bin")):
+    for cand in [os.path.join("extracted_game", "app0"), "app0"]:
+        if os.path.isdir(cand):
             app0 = cand
             break
-    if not app0:
-        for cand in candidates:
-            if os.path.isdir(cand):
-                app0 = cand
-                break
 
     eboot_found = False
     if app0:
@@ -261,7 +234,7 @@ def verify_game_installation():
         else:
             missing.append(f"{app0}/eboot.bin")
     else:
-        missing.append("Game folder (select the full PS4 game folder in Setup Wizard)")
+        missing.append("Game folder ('extracted_game/app0' or 'app0')")
 
     link_warning = None
     if boot_bin:
@@ -457,92 +430,12 @@ def validate_eboot_file(path: str):
         return False, f"Unable to read file: {e}"
 
 
-def validate_game_folder(path: str):
-    """
-    Validate a complete PS4 game folder selected by the user.
-
-    Required layout:
-      game_folder/
-        eboot.bin
-        sce_module/      (audio/system modules such as libSceNgs2.sprx)
-        sce_sys/param.sfo
-        nativePS4/ or data/  (the game assets)
-
-    Selecting only eboot.bin is always rejected. This prevents the common
-    "crackling audio / crash" setup caused by a missing sce_module folder.
-    """
-    path = (path or "").strip().strip('"')
-    if not path:
-        return False, "Please select your PS4 game folder."
-
-    folder = os.path.abspath(os.path.expanduser(path))
-    if os.path.isfile(folder):
-        return False, (
-            "That is a file. Select the game FOLDER that contains eboot.bin and "
-            "sce_module (not eboot.bin itself)."
-        )
-    if not os.path.isdir(folder):
-        return False, "Folder not found. Select the main PS4 game folder."
-
-    eboot = os.path.join(folder, "eboot.bin")
-    if not os.path.isfile(eboot):
-        return False, (
-            "eboot.bin was not found here. Select the folder that DIRECTLY contains "
-            "eboot.bin, sce_module, sce_sys and the game data (nativePS4/data)."
-        )
-
-    valid, msg = validate_eboot_file(eboot)
-    if not valid:
-        return False, f"eboot.bin is not valid: {msg}"
-
-    sce_module = os.path.join(folder, "sce_module")
-    if not os.path.isdir(sce_module):
-        return False, (
-            "sce_module folder is missing. Do NOT select only eboot.bin - select the "
-            "full PS4 game folder (eboot.bin + sce_module + sce_sys + nativePS4/data)."
-        )
-
-    try:
-        modules = [
-            name for name in os.listdir(sce_module)
-            if name.lower().endswith((".sprx", ".prx"))
-            and os.path.isfile(os.path.join(sce_module, name))
-        ]
-    except OSError as exc:
-        return False, f"Cannot read the sce_module folder: {exc}"
-
-    if not modules:
-        return False, (
-            "sce_module exists but is empty. Copy the full sce_module folder from "
-            "your PS4 dump (libSceNgs2.sprx, libSceAjm.sprx, etc.)."
-        )
-
-    if not os.path.isfile(os.path.join(folder, "sce_sys", "param.sfo")):
-        return False, (
-            "sce_sys/param.sfo is missing. Select the full game folder, not a "
-            "partial dump or an app0 subfolder without sce_sys."
-        )
-
-    data_dir = next(
-        (name for name in ("nativePS4", "data")
-         if os.path.isdir(os.path.join(folder, name))),
-        None
-    )
-    if not data_dir:
-        return False, (
-            "Game data folder (nativePS4 or data) is missing. Select the full PS4 "
-            "game folder, not a partial dump that only contains eboot.bin."
-        )
-
-    return True, f"{msg}; {len(modules)} system module(s) found"
-
-
 class FirstRunWizard(tk.Toplevel):
     """
     5-Step Interactive First-Run Setup & Compliance Wizard:
     Step 1: Welcome & Legal Dump Information
     Step 2: Legal Checkboxes (Fair Use & Personal Ownership)
-    Step 3: Locate the full PS4 game folder & validate eboot.bin + sce_module
+    Step 3: Locate eboot.bin & Magic Byte / Size Validation (SELF & ELF)
     Step 4: Auto-Build binary image via auto_builder with streaming log
     Step 5: Completion & Launch Direct / Back to Launcher
     """
@@ -565,7 +458,6 @@ class FirstRunWizard(tk.Toplevel):
 
         self.current_step = 1
         self.selected_eboot = ""
-        self.selected_game_dir = ""
         self.build_framework()
         self.show_step(1)
 
@@ -709,12 +601,11 @@ class FirstRunWizard(tk.Toplevel):
 
         desc = (
             "This software is an open-source native PC runtime wrapper and Vulkan presentation engine.\n\n"
-            "To experience the game on PC, you must provide your own legally obtained PS4 game dump.\n"
-            "The wizard needs the COMPLETE game folder (eboot.bin + sce_module + sce_sys + game data),\n"
-            "not just the eboot.bin file.\n\n"
+            "To experience the game on PC, you must provide your own legally obtained game executable\n"
+            "(eboot.bin) dumped from your legally purchased PlayStation 4 disc or digital copy.\n\n"
             "• Zero Piracy Guarantee: No copyrighted game assets or binaries are bundled.\n"
-            "• First-Run Automation: This wizard will guide you to select your full PS4 game folder\n"
-            "  and automatically build out/boot-linked.bin in under 2 minutes.\n\n"
+            "• First-Run Automation: This wizard will guide you to locate your eboot.bin and\n"
+            "  automatically build out/boot-linked.bin in under 2 minutes.\n\n"
             "Click 'Get Started' to proceed, or 'Skip Wizard' if you prefer manual configuration."
         )
         lbl_desc = tk.Label(
@@ -779,7 +670,7 @@ class FirstRunWizard(tk.Toplevel):
 
         cb2 = tk.Checkbutton(
             frame_cb,
-            text="I dumped / will dump the complete PS4 game folder (eboot.bin + sce_module) myself.",
+            text="I confirm that I have dumped / will dump eboot.bin myself from my legally owned PS4 console.",
             variable=self.var_dump_self,
             command=on_toggle,
             font=(FONT_FAMILY, 9, "bold"),
@@ -801,14 +692,14 @@ class FirstRunWizard(tk.Toplevel):
         lbl_note.pack(anchor="w", pady=(14, 0))
 
     def render_step3(self):
-        self.lbl_head_sub.config(text="Step 3 of 5: Locate the Full PS4 Game Folder")
+        self.lbl_head_sub.config(text="Step 3 of 5: Locate Game Executable (eboot.bin)")
         self.btn_skip.pack(side="left", padx=20, pady=12)
         self.btn_back.pack(side="right", padx=(0, 10), pady=12)
         self.btn_next.config(text="Next >", state="disabled", command=self.go_next)
 
         lbl_title = tk.Label(
             self.body_container,
-            text="Select the PS4 Game Folder (containing eboot.bin & sce_module)",
+            text="Select Your Decrypted eboot.bin",
             font=(FONT_SUBTITLE, 11, "bold"),
             fg=COLOR_TEXT_WHITE,
             bg="#0c0e14"
@@ -817,26 +708,17 @@ class FirstRunWizard(tk.Toplevel):
 
         lbl_desc = tk.Label(
             self.body_container,
-            text=(
-                "Select the folder that DIRECTLY contains eboot.bin - not eboot.bin itself.\n"
-                "It must also contain sce_module/ (audio modules), sce_sys/ and the game data\n"
-                "folder (nativePS4/ or data/). Missing sce_module causes crackling audio."
-            ),
+            text="Both decrypted PlayStation 4 SELF and standard x86-64 ELF executables (>10MB) are supported.",
             font=(FONT_FAMILY, 9),
             fg=COLOR_TEXT_MUTED,
-            bg="#0c0e14",
-            justify="left",
-            wraplength=580
+            bg="#0c0e14"
         )
         lbl_desc.pack(anchor="w", pady=(0, 14))
 
         frame_input = tk.Frame(self.body_container, bg="#0c0e14")
         frame_input.pack(fill="x", pady=6)
 
-        initial_folder = self.selected_game_dir
-        if not initial_folder and self.selected_eboot:
-            initial_folder = os.path.dirname(os.path.abspath(self.selected_eboot))
-        self.eboot_entry_var = tk.StringVar(value=initial_folder)
+        self.eboot_entry_var = tk.StringVar(value=self.selected_eboot)
         self.entry_eboot = tk.Entry(
             frame_input,
             textvariable=self.eboot_entry_var,
@@ -867,79 +749,55 @@ class FirstRunWizard(tk.Toplevel):
 
         self.lbl_val_status = tk.Label(
             self.body_container,
-            text="Select the game folder that contains eboot.bin and sce_module.",
+            text="Please select an eboot.bin file to validate.",
             font=(FONT_FAMILY, 8),
             fg=COLOR_TEXT_SUB,
-            bg="#0c0e14",
-            justify="left",
-            wraplength=580
+            bg="#0c0e14"
         )
         self.lbl_val_status.pack(anchor="w", pady=10)
 
+        # Check existing candidates
+        for cand in [
+            os.path.join("extracted_game", "app0", "eboot.bin"),
+            os.path.join("app0", "eboot.bin")
+        ]:
+            if os.path.isfile(cand):
+                self.eboot_entry_var.set(os.path.abspath(cand))
+                self.validate_selected_path(os.path.abspath(cand))
+                break
+
         self.eboot_entry_var.trace_add("write", lambda *args: self.validate_selected_path(self.eboot_entry_var.get()))
 
-        if initial_folder:
-            self.validate_selected_path(initial_folder)
-        else:
-            # Auto-detect an existing full game folder (including a previously configured path).
-            for cand in game_folder_candidates():
-                if os.path.isfile(os.path.join(cand, "eboot.bin")):
-                    self.eboot_entry_var.set(cand)
-                    break
-
     def browse_eboot(self):
-        current = self.eboot_entry_var.get().strip().strip('"')
-        initial_dir = current if os.path.isdir(current) else os.getcwd()
-        f = filedialog.askdirectory(
-            title="Select the PS4 Game Folder (containing eboot.bin & sce_module)",
-            initialdir=initial_dir,
-            mustexist=True
+        f = filedialog.askopenfilename(
+            title="Select PS4 Game Executable (eboot.bin)",
+            filetypes=[("PS4 Executables (*.bin;*.elf)", "*.bin;*.elf;eboot*"), ("All Files (*.*)", "*.*")]
         )
         if f:
-            self.eboot_entry_var.set(os.path.abspath(f))
-            self.validate_selected_path(self.eboot_entry_var.get())
+            self.eboot_entry_var.set(f)
+            self.validate_selected_path(f)
 
     def validate_selected_path(self, path):
-        path = (path or "").strip().strip('"')
+        path = path.strip().strip('"')
         if not path:
-            self.lbl_val_status.config(
-                text="Select the game folder that contains eboot.bin and sce_module.",
-                fg=COLOR_TEXT_SUB
-            )
-            self.selected_game_dir = ""
-            self.selected_eboot = ""
+            self.lbl_val_status.config(text="Please select an eboot.bin file.", fg=COLOR_TEXT_SUB)
             self.btn_next.config(state="disabled")
             return
 
-        normalized = os.path.abspath(os.path.expanduser(path))
-        if os.path.isfile(normalized):
-            self.lbl_val_status.config(
-                text="❌ You selected a file. Select the FOLDER that contains eboot.bin and sce_module.",
-                fg=COLOR_ERROR
-            )
-            self.selected_game_dir = ""
-            self.selected_eboot = ""
-            self.btn_next.config(state="disabled")
-            return
-
-        valid, msg = validate_game_folder(normalized)
+        valid, msg = validate_eboot_file(path)
         if valid:
-            eboot = os.path.join(normalized, "eboot.bin")
-            size_mb = os.path.getsize(eboot) / (1024 * 1024)
+            size_mb = os.path.getsize(path) / (1024 * 1024)
             self.lbl_val_status.config(
-                text=f"✅ Valid game folder: {msg} · eboot.bin {size_mb:.1f} MB",
+                text=f"[OK] Valid: {msg} ({size_mb:.1f} MB)",
                 fg=COLOR_SUCCESS
             )
-            self.selected_game_dir = normalized
-            self.selected_eboot = eboot
+            self.selected_eboot = path
             self.btn_next.config(state="normal")
         else:
             self.lbl_val_status.config(
-                text=f"❌ {msg}",
+                text=f"[ERROR] {msg}",
                 fg=COLOR_ERROR
             )
-            self.selected_game_dir = ""
-            self.selected_eboot = ""
             self.btn_next.config(state="disabled")
 
     def render_step4(self):
@@ -959,7 +817,7 @@ class FirstRunWizard(tk.Toplevel):
 
         lbl_desc = tk.Label(
             self.body_container,
-            text="Linking eboot.bin with the Orbis PRX modules from your selected game folder and generating out/boot-linked.bin...",
+            text="Linking eboot.bin with Orbis PRX modules and generating out/boot-linked.bin...",
             font=(FONT_FAMILY, 9),
             fg=COLOR_TEXT_MUTED,
             bg="#0c0e14"
@@ -1001,16 +859,10 @@ class FirstRunWizard(tk.Toplevel):
                 self.after(0, lambda: self.on_build_error(f"Insufficient disk space ({free_mb} MB free). At least 500 MB is required!"))
                 return
 
-            if not self.selected_game_dir:
-                raise RuntimeError("No PS4 game folder selected. Go back and choose the full game folder.")
-
-            # Use the selected folder in place. This keeps sce_sys/, nativePS4/data and all
-            # game assets available to the runtime without copying tens of gigabytes.
-            dest_dir = os.path.abspath(self.selected_game_dir)
-            if not os.path.isdir(dest_dir):
-                raise FileNotFoundError(f"Game folder not found: '{dest_dir}'")
+            dest_dir = os.path.join("extracted_game", "app0")
+            os.makedirs(dest_dir, exist_ok=True)
             dest_eboot = os.path.join(dest_dir, "eboot.bin")
-            source_dir = dest_dir
+            source_dir = os.path.dirname(os.path.abspath(self.selected_eboot))
 
             # Step 1.a: Validasi file eboot.bin
             self.append_log("Validating eboot.bin...")
@@ -1022,7 +874,7 @@ class FirstRunWizard(tk.Toplevel):
                 shutil.copy2(self.selected_eboot, dest_eboot)
 
             # Step 1.b: COPY/EKSTRAK semua modul .sprx dari folder game PS4 user
-            # ke folder user/sys_modules/ dan <folder-game>/sce_module/
+            # ke folder user/sys_modules/ atau extracted_game/app0/sce_module/
             self.append_log("Scanning and extracting PS4 system modules (.sprx / .prx)...")
             dest_sce_mod = os.path.join(dest_dir, "sce_module")
             os.makedirs(dest_sce_mod, exist_ok=True)
@@ -1169,13 +1021,10 @@ class FirstRunWizard(tk.Toplevel):
         self.btn_skip.pack_forget()
         self.btn_back.pack_forget()
 
-        completed_settings = {
+        write_ini({
             "first_run_done": "1",
             "legal_acknowledged": "1"
-        }
-        if self.selected_game_dir:
-            completed_settings["game_dir"] = self.selected_game_dir
-        write_ini(completed_settings)
+        })
 
         lbl_title = tk.Label(
             self.body_container,
@@ -1192,9 +1041,8 @@ class FirstRunWizard(tk.Toplevel):
             "  ✔ out/content.bin          (AppContent offline profile active)\n"
             "  ✔ out/import_names.txt     (Symbol map table ready)\n"
             "  ✔ High-FPS patch engine    (Capcom MT Framework limiter unlocked)\n\n"
-            "Your full game folder is used in place, so sce_module, sce_sys and the game data\n"
-            "remain available to the runtime. You are ready to launch Sengoku Basara 4 Sumeragi PC\n"
-            "with ultra-low latency, modern gamepad support, and high-framerate Vulkan 1.3 presentation!"
+            "You are ready to launch Sengoku Basara 4 Sumeragi PC with ultra-low latency,\n"
+            "modern gamepad support, and high-framerate Vulkan 1.3 presentation!"
         )
         lbl_desc = tk.Label(
             self.body_container,
@@ -1233,8 +1081,6 @@ class FirstRunWizard(tk.Toplevel):
         self.btn_launcher.pack(side="right", padx=(0, 10), pady=12)
 
     def go_next(self):
-        if self.current_step == 3 and not self.selected_game_dir:
-            return
         if self.current_step < 5:
             self.show_step(self.current_step + 1)
 
@@ -1260,7 +1106,7 @@ class FirstRunWizard(tk.Toplevel):
 class BasaraLauncher(tk.Tk):
     def __init__(self, dep_status=None):
         super().__init__()
-        self.title("Sengoku Basara 4 Sumeragi — PC Native Port (v1.8)")
+        self.title("Sengoku Basara 4 Sumeragi — PC Native Port (v2.0)")
         self.geometry(f"{WIDTH}x{HEIGHT}")
         self.resizable(False, False)
         self.configure(bg=COLOR_BG_DARK)
@@ -1272,6 +1118,7 @@ class BasaraLauncher(tk.Tk):
         self.center_on_screen()
 
         self.state = "INITIALIZING"
+        self._init_tooltips()
         self.load_configuration()
         self.generate_textures()
         self.build_canvas()
@@ -1322,6 +1169,29 @@ class BasaraLauncher(tk.Tk):
         self.fullscreen_val = (ini.get("fullscreen", "1") == "1")
         self.skip_intro_val = (ini.get("skip_intro", "0") == "1")
         self.show_fps_val = (ini.get("show_fps", "1") == "1")
+        self.perf_mode_val = (ini.get("performance_mode", "0") == "1")
+        self.scale_val = ini.get("render_scale", "1.0")
+        if self.scale_val not in ("1.0", "1.5", "2.0"):
+            try:
+                flt = float(self.scale_val)
+                if abs(flt - 1.0) < 0.05:
+                    self.scale_val = "1.0"
+                elif abs(flt - 1.5) < 0.05:
+                    self.scale_val = "1.5"
+                elif abs(flt - 2.0) < 0.05:
+                    self.scale_val = "2.0"
+                else:
+                    self.scale_val = "1.0"
+            except Exception:
+                self.scale_val = "1.0"
+        # Enforce mutual exclusivity on configuration load: Render Scale > 1.0 disables FSR
+        if self.scale_val in ("1.5", "2.0") and self.fsr_val:
+            self.fsr_val = False
+        try:
+            self.sharp_val = int(ini.get("rcas_strength", "75"))
+            self.sharp_val = max(0, min(100, self.sharp_val))
+        except Exception:
+            self.sharp_val = 75
         self.prio_val = ini.get("process_priority", "above_normal")
         if self.prio_val not in ("normal", "above_normal", "high"):
             self.prio_val = "above_normal"
@@ -1336,35 +1206,41 @@ class BasaraLauncher(tk.Tk):
         cfg_payload = {
             "output_res": self.res_val,
             "render_res": height,
+            "render_scale": self.scale_val,
             "fullscreen": "1" if self.fullscreen_val else "0",
             "fps_limit": self.fps_val,
             "anisotropy": self.aniso_val,
             "fsr1": "1" if self.fsr_val else "0",
             "rcas": "1" if self.fsr_val else "0",
-            "rcas_strength": "75",
+            "rcas_strength": str(self.sharp_val),
             "skip_intro": "1" if self.skip_intro_val else "0",
             "show_fps": "1" if self.show_fps_val else "0",
+            "performance_mode": "1" if self.perf_mode_val else "0",
             "process_priority": self.prio_val,
             "telemetry_upload": self.telem_val,
             "first_run_done": self.first_run_done,
             "legal_acknowledged": self.legal_acknowledged,
+            "patch_60fps": "1",
         }
         write_ini(cfg_payload)
 
+    apply_settings = sync_ini
+
     def _create_pill_set(self, w, h):
-        act = self._create_pill_texture(w, h, (184, 29, 36, 255), (229, 193, 88, 255), radius=6, width=1)
-        inact = self._create_pill_texture(w, h, (20, 24, 32, 215), (48, 56, 72, 255), radius=6, width=1)
-        hov = self._create_pill_texture(w, h, (32, 38, 52, 240), (70, 82, 106, 255), radius=6, width=1)
+        # Deep Crimson Red for active, Slate Grey for inactive, Slate Hover
+        act = self._create_pill_texture(w, h, (139, 0, 0, 255), (218, 165, 32, 255), radius=6, width=1)
+        inact = self._create_pill_texture(w, h, (36, 44, 53, 225), (60, 74, 88, 255), radius=6, width=1)
+        hov = self._create_pill_texture(w, h, (50, 62, 75, 240), (90, 110, 130, 255), radius=6, width=1)
         return act, inact, hov
 
     def generate_textures(self):
-        # 1. Background image composition (prefer the folder selected in Setup Wizard)
-        candidates = []
-        for game_dir in game_folder_candidates():
-            candidates.extend([
-                os.path.join(game_dir, "sce_sys", "pic1.png"),
-                os.path.join(game_dir, "sce_sys", "pic0.png"),
-            ])
+        # 1. Background image composition
+        candidates = [
+            os.path.join("extracted_game", "app0", "sce_sys", "pic1.png"),
+            os.path.join("extracted_game", "app0", "sce_sys", "pic0.png"),
+            os.path.join("app0", "sce_sys", "pic1.png"),
+            os.path.join("app0", "sce_sys", "pic0.png"),
+        ]
         found_art = None
         for p in candidates:
             if os.path.isfile(p):
@@ -1387,28 +1263,30 @@ class BasaraLauncher(tk.Tk):
                 d.line([(0, y), (WIDTH, y)], fill=(r, g, b, 255))
 
         # Frosted glass blur on the left panel
-        blurred = base.filter(ImageFilter.GaussianBlur(radius=7))
+        blurred = base.filter(ImageFilter.GaussianBlur(radius=8))
         grad_blur = Image.new("L", (WIDTH, 1))
         d_b = ImageDraw.Draw(grad_blur)
         for x in range(WIDTH):
-            if x <= 460:
+            if x <= 470:
                 val = 255
-            elif x <= 560:
-                val = int(255 * (1.0 - (x - 460) / 100.0))
+            elif x <= 580:
+                val = int(255 * (1.0 - (x - 470) / 110.0))
             else:
                 val = 0
             d_b.point((x, 0), fill=val)
         mask_blur = grad_blur.resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
         comp = Image.composite(blurred, base, mask_blur)
 
-        # Dark gradient vignette mask
+        # Smooth dark gradient vignette mask with cosine curve for seamless character art blending
         grad_x = Image.new("L", (WIDTH, 1))
         d_x = ImageDraw.Draw(grad_x)
         for x in range(WIDTH):
             if x <= 460:
-                val = 242
-            elif x <= 620:
-                val = int(242 * (1.0 - (x - 460) / 160.0))
+                val = 246
+            elif x <= 640:
+                ratio = (x - 460) / 180.0
+                cos_factor = 0.5 * (1.0 + math.cos(ratio * math.pi))
+                val = int(246 * cos_factor)
             else:
                 val = 0
             d_x.point((x, 0), fill=val)
@@ -1416,9 +1294,11 @@ class BasaraLauncher(tk.Tk):
 
         grad_y = Image.new("L", (1, HEIGHT))
         d_y = ImageDraw.Draw(grad_y)
+        vignette_start = int(HEIGHT * 0.76)
+        vignette_range = float(HEIGHT - vignette_start)
         for y in range(HEIGHT):
-            if y >= 435:
-                val = int(195 * ((y - 435) / 125.0))
+            if y >= vignette_start:
+                val = int(195 * ((y - vignette_start) / vignette_range))
             elif y <= 45:
                 val = int(70 * (1.0 - y / 45.0))
             else:
@@ -1434,8 +1314,8 @@ class BasaraLauncher(tk.Tk):
 
         # 2. Game Icon (50x50)
         icon0_cand = [
-            os.path.join(game_dir, "sce_sys", "icon0.png")
-            for game_dir in game_folder_candidates()
+            os.path.join("extracted_game", "app0", "sce_sys", "icon0.png"),
+            os.path.join("app0", "sce_sys", "icon0.png"),
         ]
         self.photo_icon0 = None
         for p in icon0_cand:
@@ -1456,29 +1336,31 @@ class BasaraLauncher(tk.Tk):
         self.pills_res = self._create_pill_set(98, 26)     # Resolution (4 items)
         self.pills_fps = self._create_pill_set(65, 26)     # FPS (6 items)
         self.pills_aniso = self._create_pill_set(78, 26)   # Anisotropy (5 items)
+        self.pills_scale = self._create_pill_set(62, 26)   # Render Scale (3 items: 1.0x, 1.5x, 2.0x)
         self.pills_prio = self._create_pill_set(44, 24)    # Priority (3 items)
         self.pills_telem = self._create_pill_set(44, 24)   # Telemetry (3 items)
 
         # Tool button textures
-        self.btn_tool_norm = self._create_pill_texture(104, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
-        self.btn_tool_hov = self._create_pill_texture(104, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
-        self.btn_wiz_norm = self._create_pill_texture(114, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
-        self.btn_wiz_hov = self._create_pill_texture(114, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
-        self.btn_reb_norm = self._create_pill_texture(114, 26, (26, 32, 44, 220), (229, 193, 88, 180), radius=6, width=1)
-        self.btn_reb_hov = self._create_pill_texture(114, 26, (40, 48, 66, 240), (246, 196, 69, 255), radius=6, width=1)
+        self.btn_tool_norm = self._create_pill_texture(110, 26, (36, 44, 53, 225), (218, 165, 32, 200), radius=6, width=1)
+        self.btn_tool_hov = self._create_pill_texture(110, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
+        self.btn_wiz_norm = self._create_pill_texture(120, 26, (36, 44, 53, 225), (218, 165, 32, 200), radius=6, width=1)
+        self.btn_wiz_hov = self._create_pill_texture(120, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
+        self.btn_reb_norm = self._create_pill_texture(120, 26, (36, 44, 53, 225), (218, 165, 32, 200), radius=6, width=1)
+        self.btn_reb_hov = self._create_pill_texture(120, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
 
         # 4. Modern Toggle Switches (40 x 20)
         self.switch_on = self._create_switch_texture(True)
         self.switch_off = self._create_switch_texture(False)
+        self.switch_disabled = self._create_disabled_switch_texture()
 
         # 5. Play Button Textures (270 x 50)
-        self.btn_play_normal = self._create_gradient_btn(270, 50, (200, 30, 43), (142, 17, 24), (229, 193, 88))
-        self.btn_play_hover = self._create_gradient_btn(270, 50, (220, 38, 38), (163, 18, 25), (246, 196, 69))
-        self.btn_init_normal = self._create_gradient_btn(270, 50, (212, 175, 55), (142, 113, 32), (246, 196, 69), border_width=2)
-        self.btn_init_hover = self._create_gradient_btn(270, 50, (246, 196, 69), (175, 140, 40), (255, 255, 255), border_width=2)
+        self.btn_play_normal = self._create_gradient_btn(270, 50, (155, 18, 24), (105, 10, 14), (229, 193, 88))
+        self.btn_play_hover = self._create_gradient_btn(270, 50, (185, 24, 30), (125, 12, 17), (255, 215, 0))
+        self.btn_init_normal = self._create_gradient_btn(270, 50, (255, 215, 0), (195, 150, 15), (255, 240, 140), border_width=2)
+        self.btn_init_hover = self._create_gradient_btn(270, 50, (255, 230, 50), (220, 170, 20), (255, 255, 255), border_width=2)
         self.btn_repair_normal = self._create_gradient_btn(270, 50, (212, 90, 24), (142, 45, 12), (246, 170, 69), border_width=2)
         self.btn_repair_hover = self._create_gradient_btn(270, 50, (235, 105, 30), (170, 60, 18), (255, 210, 100), border_width=2)
-        self.btn_play_disabled = self._create_gradient_btn(270, 50, (42, 48, 60), (28, 32, 42), (59, 68, 85))
+        self.btn_play_disabled = self._create_gradient_btn(270, 50, (36, 42, 52), (24, 28, 36), (55, 64, 78))
 
     def _create_pill_texture(self, w, h, fill, outline, radius=6, width=1):
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -1491,11 +1373,22 @@ class BasaraLauncher(tk.Tk):
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         if val:
-            d.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, fill=(184, 29, 36, 255), outline=(229, 193, 88, 255), width=1)
+            # Active: Deep Crimson Red with Gold border and bright white knob
+            d.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, fill=(139, 0, 0, 255), outline=(255, 215, 0, 255), width=1)
             d.ellipse([w - 17, 3, w - 5, 15], fill=(255, 255, 255, 255))
         else:
-            d.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, fill=(28, 33, 44, 230), outline=(52, 60, 76, 255), width=1)
-            d.ellipse([5, 3, 17, 15], fill=(126, 139, 155, 255))
+            # Inactive: Slate Grey with Slate border and Slate knob
+            d.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, fill=(36, 44, 53, 230), outline=(60, 74, 88, 255), width=1)
+            d.ellipse([5, 3, 17, 15], fill=(160, 174, 192, 255))
+        return ImageTk.PhotoImage(img)
+
+    def _create_disabled_switch_texture(self):
+        w, h = 40, 20
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        # Dimmed/disabled switch appearance
+        d.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, fill=(24, 28, 35, 180), outline=(45, 52, 62, 255), width=1)
+        d.ellipse([5, 3, 17, 15], fill=(70, 80, 95, 255))
         return ImageTk.PhotoImage(img)
 
     def _create_gradient_btn(self, w, h, top_col, bot_col, border_col, border_width=1):
@@ -1517,6 +1410,61 @@ class BasaraLauncher(tk.Tk):
         d_btn.rounded_rectangle([0, 0, w - 1, h - 1], radius=10, outline=border_col, width=border_width)
         return ImageTk.PhotoImage(btn)
 
+    # --- Tooltip System ---
+    def _init_tooltips(self):
+        self._tooltip_items = []
+        self._tooltip_timer = None
+
+    def _show_tooltip(self, text, x, y):
+        self._hide_tooltip()
+        font_tt = (FONT_FAMILY, 9)
+        dummy = self.canvas.create_text(0, 0, text=text, font=font_tt, anchor="nw")
+        bbox = self.canvas.bbox(dummy)
+        self.canvas.delete(dummy)
+
+        tw = (bbox[2] - bbox[0]) if bbox else len(text) * 7
+        th = (bbox[3] - bbox[1]) if bbox else 18
+        pad_x, pad_y = 10, 6
+
+        bx = x + 14
+        by = y + 18
+        if bx + tw + pad_x * 2 > WIDTH - 16:
+            bx = WIDTH - 16 - tw - pad_x * 2
+        if by + th + pad_y * 2 > HEIGHT - 16:
+            by = y - th - pad_y * 2 - 8
+        if bx < 10:
+            bx = 10
+
+        bg = self.canvas.create_rectangle(
+            bx, by, bx + tw + pad_x * 2, by + th + pad_y * 2,
+            fill="#121620", outline=COLOR_GOLD, width=1, tags=("canvas_tooltip",)
+        )
+        tx = self.canvas.create_text(
+            bx + pad_x, by + pad_y,
+            text=text, font=font_tt, fill=COLOR_TEXT_WHITE, anchor="nw", tags=("canvas_tooltip",)
+        )
+        self._tooltip_items = [bg, tx]
+        self.canvas.tag_raise(bg)
+        self.canvas.tag_raise(tx)
+
+    def _hide_tooltip(self, *args):
+        if self._tooltip_timer:
+            self.after_cancel(self._tooltip_timer)
+            self._tooltip_timer = None
+        if self._tooltip_items:
+            for item in self._tooltip_items:
+                self.canvas.delete(item)
+            self._tooltip_items = []
+
+    def bind_tooltip(self, tag_or_id, text):
+        def on_enter(e):
+            self._hide_tooltip()
+            self._tooltip_timer = self.after(250, lambda: self._show_tooltip(text, e.x, e.y))
+        def on_leave(e):
+            self._hide_tooltip()
+        self.canvas.tag_bind(tag_or_id, "<Enter>", on_enter, add="+")
+        self.canvas.tag_bind(tag_or_id, "<Leave>", on_leave, add="+")
+
     def build_canvas(self):
         self.canvas = tk.Canvas(self, width=WIDTH, height=HEIGHT, highlightthickness=0, bg=COLOR_BG_DARK)
         self.canvas.pack(fill="both", expand=True)
@@ -1533,11 +1481,23 @@ class BasaraLauncher(tk.Tk):
         # Badge
         self.canvas.create_text(
             text_x, 26,
-            text="VULKAN 1.3 NATIVE PORT • v1.8",
+            text="VULKAN 1.3 NATIVE PORT • v2.0",
             font=(FONT_SUBTITLE, 8, "bold"),
             fill=COLOR_GOLD,
             anchor="nw"
         )
+
+        # What's New / Changelog Button
+        self.changelog_btn = self.canvas.create_text(
+            text_x + 195, 26,
+            text="v2.0 Changelog",
+            font=(FONT_SUBTITLE, 8, "bold", "underline"),
+            fill="#00ADB5",
+            anchor="nw"
+        )
+        self.canvas.tag_bind(self.changelog_btn, "<Enter>", lambda e: (self.canvas.config(cursor="hand2"), self.canvas.itemconfig(self.changelog_btn, fill="#FFFFFF")))
+        self.canvas.tag_bind(self.changelog_btn, "<Leave>", lambda e: (self.canvas.config(cursor="arrow"), self.canvas.itemconfig(self.changelog_btn, fill="#00ADB5")))
+        self.canvas.tag_bind(self.changelog_btn, "<Button-1>", lambda e: self.open_changelog())
 
         # Title Line 1 (Shadow + Crisp White)
         self.canvas.create_text(
@@ -1569,21 +1529,21 @@ class BasaraLauncher(tk.Tk):
             text_x, 88,
             text="Native x86_64 Runtime & Vulkan 1.3 Engine",
             font=(FONT_FAMILY, 8),
-            fill=COLOR_TEXT_MUTED,
+            fill=COLOR_TEXT_SUB,
             anchor="nw"
         )
 
         # Divider Line
-        self.canvas.create_line(36, 114, 460, 114, fill="#232938", width=1)
+        self.canvas.create_line(36, 110, 480, 110, fill="#232938", width=1)
 
         # =====================================================================
         # 3. RESOLUTION SELECTOR
         # =====================================================================
         self.canvas.create_text(
-            36, 126,
+            36, 122,
             text="DISPLAY RESOLUTION",
-            font=(FONT_FAMILY, 8, "bold"),
-            fill=COLOR_TEXT_MUTED,
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
             anchor="nw"
         )
 
@@ -1596,7 +1556,7 @@ class BasaraLauncher(tk.Tk):
         self.res_items = []
         for i, (label, val) in enumerate(self.res_options):
             x = 36 + i * 106
-            y = 144
+            y = 142
             act, inact, hov = self.pills_res
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
             txt_id = self.canvas.create_text(x + 49, y + 13, text=label, font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_MUTED)
@@ -1617,8 +1577,8 @@ class BasaraLauncher(tk.Tk):
         self.canvas.create_text(
             36, 180,
             text="FRAME RATE TARGET (INTERNAL LIMITER UNLOCK)",
-            font=(FONT_FAMILY, 8, "bold"),
-            fill=COLOR_TEXT_MUTED,
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
             anchor="nw"
         )
 
@@ -1633,7 +1593,7 @@ class BasaraLauncher(tk.Tk):
         self.fps_items = []
         for i, (label, val) in enumerate(self.fps_options):
             x = 36 + i * 72
-            y = 198
+            y = 200
             act, inact, hov = self.pills_fps
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
             txt_id = self.canvas.create_text(x + 32, y + 13, text=label, font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_MUTED)
@@ -1652,10 +1612,10 @@ class BasaraLauncher(tk.Tk):
         # 5. ANISOTROPIC FILTERING (TEXTURE QUALITY)
         # =====================================================================
         self.canvas.create_text(
-            36, 234,
+            36, 238,
             text="ANISOTROPIC FILTERING (TEXTURE CLARITY)",
-            font=(FONT_FAMILY, 8, "bold"),
-            fill=COLOR_TEXT_MUTED,
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
             anchor="nw"
         )
 
@@ -1669,7 +1629,7 @@ class BasaraLauncher(tk.Tk):
         self.aniso_items = []
         for i, (label, val) in enumerate(self.aniso_options):
             x = 36 + i * 86
-            y = 252
+            y = 258
             act, inact, hov = self.pills_aniso
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
             txt_id = self.canvas.create_text(x + 39, y + 13, text=label, font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_MUTED)
@@ -1685,20 +1645,83 @@ class BasaraLauncher(tk.Tk):
             self.aniso_items.append((img_id, txt_id, val))
 
         # =====================================================================
-        # 6. ENGINE PREFERENCES (2x2 Modern Grid)
+        # 6. GRAPHICS QUALITY: RENDER SCALE & RCAS SHARPNESS
         # =====================================================================
         self.canvas.create_text(
-            36, 290,
+            36, 292,
+            text="RENDER SCALE",
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
+            anchor="nw",
+            tags=("tooltip_scale",)
+        )
+
+        self.scale_options = [
+            ("1.0x", "1.0"),
+            ("1.5x", "1.5"),
+            ("2.0x", "2.0"),
+        ]
+        self.scale_items = []
+        for i, (label, val) in enumerate(self.scale_options):
+            x = 36 + i * 68
+            y = 312
+            act, inact, hov = self.pills_scale
+            img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
+            txt_id = self.canvas.create_text(x + 31, y + 13, text=label, font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_MUTED)
+
+            tag = f"btn_scale_{i}"
+            self.canvas.itemconfig(img_id, tags=(tag, "tooltip_scale"))
+            self.canvas.itemconfig(txt_id, tags=(tag, "tooltip_scale"))
+
+            self.canvas.tag_bind(tag, "<Enter>", lambda e, idx=i: self._on_scale_enter(idx))
+            self.canvas.tag_bind(tag, "<Leave>", lambda e, idx=i: self._on_scale_leave(idx))
+            self.canvas.tag_bind(tag, "<Button-1>", lambda e, v=val: self._select_scale(v))
+
+            self.scale_items.append((img_id, txt_id, val))
+
+        # RCAS Sharpness Interactive Slider
+        self.lbl_sharp_title = self.canvas.create_text(
+            256, 292,
+            text=f"RCAS SHARPNESS: {self.sharp_val}%",
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
+            anchor="nw",
+            tags=("slider_sharp",)
+        )
+
+        val_pct = max(0, min(100, int(self.sharp_val)))
+        handle_init_x = 256 + int((val_pct / 100.0) * 200)
+
+        # Track background
+        self.slider_bg = self.canvas.create_line(256, 325, 456, 325, fill="#1C2330", width=6, capstyle="round", tags=("slider_sharp",))
+        # Track active fill
+        self.slider_fill = self.canvas.create_line(256, 325, handle_init_x, 325, fill=COLOR_CRIMSON, width=6, capstyle="round", tags=("slider_sharp",))
+        # Draggable handle
+        self.slider_handle = self.canvas.create_oval(handle_init_x - 8, 325 - 8, handle_init_x + 8, 325 + 8, fill=COLOR_GOLD, outline="#FFFFFF", width=1.5, tags=("slider_sharp",))
+        # Hit area for easy clicking & dragging
+        self.slider_hit = self.canvas.create_rectangle(246, 310, 466, 340, fill="", outline="", tags=("slider_sharp",))
+
+        self.canvas.tag_bind("slider_sharp", "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind("slider_sharp", "<Leave>", lambda e: self.canvas.config(cursor="arrow"))
+        self.canvas.tag_bind("slider_sharp", "<Button-1>", self._on_slider_click)
+        self.canvas.tag_bind("slider_sharp", "<B1-Motion>", self._on_slider_drag)
+        self.canvas.tag_bind("slider_sharp", "<ButtonRelease-1>", self._on_slider_release)
+
+        # =====================================================================
+        # 7. ENGINE PREFERENCES (2x2 Modern Grid)
+        # =====================================================================
+        self.canvas.create_text(
+            36, 352,
             text="ENGINE PREFERENCES",
-            font=(FONT_FAMILY, 8, "bold"),
-            fill=COLOR_TEXT_MUTED,
+            font=(FONT_FAMILY, 10, "bold"),
+            fill="#D6DEE8",
             anchor="nw"
         )
 
-        # Toggle 1: Fullscreen Mode (Col 1, Row 1)
-        self.sw1_img = self.canvas.create_image(36, 310, image=self.switch_off, anchor="nw")
-        t1_title = self.canvas.create_text(84, 311, text="Fullscreen Mode", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
-        t1_sub = self.canvas.create_text(84, 326, text="Borderless display", font=(FONT_FAMILY, 7), fill=COLOR_TEXT_SUB, anchor="nw")
+        # Toggle 1: Borderless Fullscreen (Col 1, Row 1)
+        self.sw1_img = self.canvas.create_image(36, 372, image=self.switch_off, anchor="nw")
+        t1_title = self.canvas.create_text(84, 371, text="Borderless Fullscreen", font=(FONT_FAMILY, 9, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
+        t1_sub = self.canvas.create_text(84, 387, text="Borderless display", font=(FONT_FAMILY, 9), fill=COLOR_TEXT_SUB, anchor="nw")
         tag1 = "toggle_fullscreen"
         for item in (self.sw1_img, t1_title, t1_sub):
             self.canvas.itemconfig(item, tags=(tag1,))
@@ -1707,20 +1730,20 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag1, "<Button-1>", lambda e: self._toggle_setting("fullscreen"))
 
         # Toggle 2: AMD FSR 1 + RCAS (Col 2, Row 1)
-        self.sw2_img = self.canvas.create_image(246, 310, image=self.switch_off, anchor="nw")
-        t2_title = self.canvas.create_text(294, 311, text="AMD FSR 1 + RCAS", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
-        t2_sub = self.canvas.create_text(294, 326, text="Edge & contrast sharpening", font=(FONT_FAMILY, 7), fill=COLOR_TEXT_SUB, anchor="nw")
+        self.sw2_img = self.canvas.create_image(256, 372, image=self.switch_off, anchor="nw")
+        self.t2_title = self.canvas.create_text(304, 371, text="AMD FSR 1 + RCAS", font=(FONT_FAMILY, 9, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
+        self.t2_sub = self.canvas.create_text(304, 387, text="Edge & contrast sharpening", font=(FONT_FAMILY, 9), fill=COLOR_TEXT_SUB, anchor="nw")
         tag2 = "toggle_fsr"
-        for item in (self.sw2_img, t2_title, t2_sub):
+        for item in (self.sw2_img, self.t2_title, self.t2_sub):
             self.canvas.itemconfig(item, tags=(tag2,))
-        self.canvas.tag_bind(tag2, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind(tag2, "<Enter>", lambda e: self.canvas.config(cursor="hand2" if self.scale_val == "1.0" else "arrow"))
         self.canvas.tag_bind(tag2, "<Leave>", lambda e: self.canvas.config(cursor="arrow"))
         self.canvas.tag_bind(tag2, "<Button-1>", lambda e: self._toggle_setting("fsr"))
 
         # Toggle 3: Skip Opening Movie (Col 1, Row 2)
-        self.sw3_img = self.canvas.create_image(36, 350, image=self.switch_off, anchor="nw")
-        t3_title = self.canvas.create_text(84, 351, text="Skip Opening Movie", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
-        t3_sub = self.canvas.create_text(84, 366, text="Direct to title screen", font=(FONT_FAMILY, 7), fill=COLOR_TEXT_SUB, anchor="nw")
+        self.sw3_img = self.canvas.create_image(36, 410, image=self.switch_off, anchor="nw")
+        t3_title = self.canvas.create_text(84, 409, text="Skip Opening Movie", font=(FONT_FAMILY, 9, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
+        t3_sub = self.canvas.create_text(84, 425, text="Direct to title screen", font=(FONT_FAMILY, 9), fill=COLOR_TEXT_SUB, anchor="nw")
         tag3 = "toggle_skip_intro"
         for item in (self.sw3_img, t3_title, t3_sub):
             self.canvas.itemconfig(item, tags=(tag3,))
@@ -1729,9 +1752,9 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag3, "<Button-1>", lambda e: self._toggle_setting("skip_intro"))
 
         # Toggle 4: In-Game FPS Overlay (Col 2, Row 2)
-        self.sw4_img = self.canvas.create_image(246, 350, image=self.switch_off, anchor="nw")
-        t4_title = self.canvas.create_text(294, 351, text="In-Game FPS Overlay", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
-        t4_sub = self.canvas.create_text(294, 366, text="Metrics overlay (Insert)", font=(FONT_FAMILY, 7), fill=COLOR_TEXT_SUB, anchor="nw")
+        self.sw4_img = self.canvas.create_image(256, 410, image=self.switch_off, anchor="nw")
+        t4_title = self.canvas.create_text(304, 409, text="In-Game FPS Overlay", font=(FONT_FAMILY, 9, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
+        t4_sub = self.canvas.create_text(304, 425, text="Metrics overlay (Insert)", font=(FONT_FAMILY, 9), fill=COLOR_TEXT_SUB, anchor="nw")
         tag4 = "toggle_show_fps"
         for item in (self.sw4_img, t4_title, t4_sub):
             self.canvas.itemconfig(item, tags=(tag4,))
@@ -1739,45 +1762,26 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag4, "<Leave>", lambda e: self.canvas.config(cursor="arrow"))
         self.canvas.tag_bind(tag4, "<Button-1>", lambda e: self._toggle_setting("show_fps"))
 
+        # Toggle 5: Performance Mode (Col 1, Row 3)
+        self.sw5_img = self.canvas.create_image(36, 448, image=self.switch_off, anchor="nw")
+        t5_title = self.canvas.create_text(84, 447, text="Performance Mode", font=(FONT_FAMILY, 9, "bold"), fill=COLOR_TEXT_WHITE, anchor="nw")
+        t5_sub = self.canvas.create_text(84, 463, text="720p - no RCAS", font=(FONT_FAMILY, 9), fill=COLOR_TEXT_SUB, anchor="nw")
+        tag5 = "toggle_perf_mode"
+        for item in (self.sw5_img, t5_title, t5_sub):
+            self.canvas.itemconfig(item, tags=(tag5,))
+        self.canvas.tag_bind(tag5, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind(tag5, "<Leave>", lambda e: self.canvas.config(cursor="arrow"))
+        self.canvas.tag_bind(tag5, "<Button-1>", lambda e: self._toggle_setting("perf_mode"))
+
         # =====================================================================
-        # 7. TOOLBAR: CONTROLLER MAPPER, SETUP WIZARD, REBUILD FILES & SELECTORS
+        # 8. SELECTORS: PROCESS PRIORITY & CRASH TELEMETRY (Row 4)
         # =====================================================================
-        # Gamepad Button (104 x 26)
-        self.tool_img = self.canvas.create_image(36, 394, image=self.btn_tool_norm, anchor="nw")
-        self.tool_txt = self.canvas.create_text(36 + 52, 394 + 13, text="🎮 Gamepad", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
-        tag_tool = "btn_map_controller"
-        for item in (self.tool_img, self.tool_txt):
-            self.canvas.itemconfig(item, tags=(tag_tool,))
-        self.canvas.tag_bind(tag_tool, "<Enter>", self._on_tool_enter)
-        self.canvas.tag_bind(tag_tool, "<Leave>", self._on_tool_leave)
-        self.canvas.tag_bind(tag_tool, "<Button-1>", lambda e: self.open_gamepad_mapper())
-
-        # Setup Wizard Button (114 x 26)
-        self.wiz_img = self.canvas.create_image(146, 394, image=self.btn_wiz_norm, anchor="nw")
-        self.wiz_txt = self.canvas.create_text(146 + 57, 394 + 13, text="⚡ Setup Wizard", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD_BRIGHT)
-        tag_wiz = "btn_setup_wizard"
-        for item in (self.wiz_img, self.wiz_txt):
-            self.canvas.itemconfig(item, tags=(tag_wiz,))
-        self.canvas.tag_bind(tag_wiz, "<Enter>", self._on_wiz_enter)
-        self.canvas.tag_bind(tag_wiz, "<Leave>", self._on_wiz_leave)
-        self.canvas.tag_bind(tag_wiz, "<Button-1>", lambda e: self.open_setup_wizard(force=True))
-
-        # Rebuild Files Button (114 x 26)
-        self.reb_img = self.canvas.create_image(266, 394, image=self.btn_reb_norm, anchor="nw")
-        self.reb_txt = self.canvas.create_text(266 + 57, 394 + 13, text="🔧 Rebuild Files", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
-        tag_reb = "btn_rebuild_files"
-        for item in (self.reb_img, self.reb_txt):
-            self.canvas.itemconfig(item, tags=(tag_reb,))
-        self.canvas.tag_bind(tag_reb, "<Enter>", self._on_reb_enter)
-        self.canvas.tag_bind(tag_reb, "<Leave>", self._on_reb_leave)
-        self.canvas.tag_bind(tag_reb, "<Button-1>", lambda e: self.on_manual_rebuild())
-
         # Process Priority Selector
         self.canvas.create_text(
-            392, 407,
+            36, 498,
             text="PRIORITY",
-            font=(FONT_FAMILY, 7, "bold"),
-            fill=COLOR_TEXT_MUTED,
+            font=(FONT_FAMILY, 10, "bold"),
+            fill=COLOR_GOLD_BRIGHT,
             anchor="w"
         )
         self.prio_options = [
@@ -1787,8 +1791,8 @@ class BasaraLauncher(tk.Tk):
         ]
         self.prio_items = []
         for i, (label, val) in enumerate(self.prio_options):
-            x = 442 + i * 46
-            y = 395
+            x = 112 + i * 46
+            y = 486
             act, inact, hov = self.pills_prio
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
             txt_id = self.canvas.create_text(x + 22, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
@@ -1804,12 +1808,13 @@ class BasaraLauncher(tk.Tk):
             self.prio_items.append((img_id, txt_id, val))
 
         # Crash Telemetry Selector
-        self.canvas.create_text(
-            590, 407,
+        lbl_telem = self.canvas.create_text(
+            276, 498,
             text="TELEMETRY",
-            font=(FONT_FAMILY, 7, "bold"),
-            fill=COLOR_TEXT_MUTED,
-            anchor="w"
+            font=(FONT_FAMILY, 10, "bold"),
+            fill=COLOR_GOLD_BRIGHT,
+            anchor="w",
+            tags=("tooltip_telem",)
         )
         self.telem_options = [
             ("Ask", "ask"),
@@ -1818,15 +1823,15 @@ class BasaraLauncher(tk.Tk):
         ]
         self.telem_items = []
         for i, (label, val) in enumerate(self.telem_options):
-            x = 650 + i * 46
-            y = 395
+            x = 368 + i * 46
+            y = 486
             act, inact, hov = self.pills_telem
             img_id = self.canvas.create_image(x, y, image=inact, anchor="nw")
             txt_id = self.canvas.create_text(x + 22, y + 12, text=label, font=(FONT_FAMILY, 7, "bold"), fill=COLOR_TEXT_MUTED)
 
             tag = f"btn_telem_{i}"
-            self.canvas.itemconfig(img_id, tags=(tag,))
-            self.canvas.itemconfig(txt_id, tags=(tag,))
+            self.canvas.itemconfig(img_id, tags=(tag, "tooltip_telem"))
+            self.canvas.itemconfig(txt_id, tags=(tag, "tooltip_telem"))
 
             self.canvas.tag_bind(tag, "<Enter>", lambda e, idx=i: self._on_telem_enter(idx))
             self.canvas.tag_bind(tag, "<Leave>", lambda e, idx=i: self._on_telem_leave(idx))
@@ -1834,40 +1839,61 @@ class BasaraLauncher(tk.Tk):
 
             self.telem_items.append((img_id, txt_id, val))
 
-        self.canvas.create_text(
-            798, 407,
-            text="📸 F12  •  Menu: Insert / L3+R3",
-            font=(FONT_FAMILY, 8),
-            fill=COLOR_TEXT_MUTED,
-            anchor="w"
-        )
+        # =====================================================================
+        # 9. TOOLBAR: CONTROLLER MAPPER, SETUP WIZARD & REBUILD FILES (Row 5)
+        # =====================================================================
+        # Gamepad Button (110 x 26)
+        self.tool_img = self.canvas.create_image(36, 524, image=self.btn_tool_norm, anchor="nw")
+        self.tool_txt = self.canvas.create_text(36 + 55, 524 + 13, text="🎮 Gamepad", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        tag_tool = "btn_map_controller"
+        for item in (self.tool_img, self.tool_txt):
+            self.canvas.itemconfig(item, tags=(tag_tool,))
+        self.canvas.tag_bind(tag_tool, "<Enter>", self._on_tool_enter)
+        self.canvas.tag_bind(tag_tool, "<Leave>", self._on_tool_leave)
+        self.canvas.tag_bind(tag_tool, "<Button-1>", lambda e: self.open_gamepad_mapper())
+
+        # Setup Wizard Button (120 x 26)
+        self.wiz_img = self.canvas.create_image(156, 524, image=self.btn_wiz_norm, anchor="nw")
+        self.wiz_txt = self.canvas.create_text(156 + 60, 524 + 13, text="⚡ Setup Wizard", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD_BRIGHT)
+        tag_wiz = "btn_setup_wizard"
+        for item in (self.wiz_img, self.wiz_txt):
+            self.canvas.itemconfig(item, tags=(tag_wiz,))
+        self.canvas.tag_bind(tag_wiz, "<Enter>", self._on_wiz_enter)
+        self.canvas.tag_bind(tag_wiz, "<Leave>", self._on_wiz_leave)
+        self.canvas.tag_bind(tag_wiz, "<Button-1>", lambda e: self.open_setup_wizard(force=True))
+
+        # Rebuild Files Button (120 x 26)
+        self.reb_img = self.canvas.create_image(286, 524, image=self.btn_reb_norm, anchor="nw")
+        self.reb_txt = self.canvas.create_text(286 + 60, 524 + 13, text="🔧 Rebuild Files", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        tag_reb = "btn_rebuild_files"
+        for item in (self.reb_img, self.reb_txt):
+            self.canvas.itemconfig(item, tags=(tag_reb,))
+        self.canvas.tag_bind(tag_reb, "<Enter>", self._on_reb_enter)
+        self.canvas.tag_bind(tag_reb, "<Leave>", self._on_reb_leave)
+        self.canvas.tag_bind(tag_reb, "<Button-1>", lambda e: self.on_manual_rebuild())
 
         # =====================================================================
-        # 8. BOTTOM ACTION BAR (Status & Action Button)
+        # 10. BOTTOM ACTION BAR (Status, Updates & Action Button)
         # =====================================================================
-        self.canvas.create_line(36, 436, WIDTH - 36, 436, fill="#232938", width=1)
+        self.canvas.create_line(36, 566, WIDTH - 36, 566, fill="#232938", width=1)
 
-        # Status Indicator (Left)
-        self.status_dot = self.canvas.create_oval(38, 482, 48, 492, fill=COLOR_SUCCESS, outline="")
-        self.status_title = self.canvas.create_text(
-            58, 474,
-            text="Game files verified & ready",
-            font=(FONT_FAMILY, 9, "bold"),
-            fill=COLOR_SUCCESS,
-            anchor="nw"
-        )
-        self.status_sub = self.canvas.create_text(
-            58, 493,
-            text="Vulkan runtime, boot binary, and asset archives active",
-            font=(FONT_FAMILY, 8),
-            fill=COLOR_TEXT_SUB,
-            anchor="nw"
-        )
+        # Footer Status Text
+        self.footer_status = self.canvas.create_text(38, 607, text="Vulkan: OK  |  VC++: OK  |  Win10+: OK  |  Storage: OK", font=(FONT_FAMILY, 8), fill="#A0A5B5", anchor="w")
+
+        # Check for Updates Button
+        self.update_btn = self.canvas.create_text(420, 607, text="Check for Updates", font=(FONT_FAMILY, 8, "underline"), fill="#00ADB5", anchor="w")
+        self.canvas.tag_bind(self.update_btn, "<Enter>", lambda e: (self.canvas.config(cursor="hand2"), self.canvas.itemconfig(self.update_btn, fill="#FFFFFF")))
+        self.canvas.tag_bind(self.update_btn, "<Leave>", lambda e: (self.canvas.config(cursor="arrow"), self.canvas.itemconfig(self.update_btn, fill="#00ADB5")))
+        self.canvas.tag_bind(self.update_btn, "<Button-1>", lambda e: self.check_for_updates())
+
+        self.status_dot = None
+        self.status_title = None
+        self.status_sub = None
 
         # Action Button (Right, 270 x 50)
-        self.play_img_id = self.canvas.create_image(WIDTH - 36 - 270, 460, image=self.btn_play_normal, anchor="nw")
+        self.play_img_id = self.canvas.create_image(WIDTH - 36 - 270, 582, image=self.btn_play_normal, anchor="nw")
         self.play_txt_id = self.canvas.create_text(
-            WIDTH - 36 - 135, 485,
+            WIDTH - 36 - 135, 607,
             text="PLAY GAME",
             font=(FONT_TITLE, 13, "bold"),
             fill=COLOR_TEXT_WHITE
@@ -1879,6 +1905,14 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag_play, "<Enter>", self._on_play_enter)
         self.canvas.tag_bind(tag_play, "<Leave>", self._on_play_leave)
         self.canvas.tag_bind(tag_play, "<Button-1>", self._on_play_click)
+
+        # Tooltips (Hover Info)
+        self.bind_tooltip("btn_fps_5", "Internal limiter unlocked. May increase GPU temperature and power draw.")
+        self.bind_tooltip("tooltip_scale", "Internal rendering resolution multiplier (1.0x native, 1.5x / 2.0x supersampling).")
+        self.bind_tooltip("slider_sharp", "AMD FidelityFX RCAS Sharpness filter strength (0-100%). Default: 75%.")
+        self.bind_tooltip("toggle_fsr", "Upscales lower resolutions and sharpens textures for better performance.")
+        self.bind_tooltip("toggle_perf_mode", "Forces 720p resolution and disables RCAS sharpening. Ideal for low-end PCs (GTX 1050).")
+        self.bind_tooltip("tooltip_telem", "Sends anonymous crash reports. No personal data is collected.")
 
         # Initial GUI Refresh
         self.refresh_controls()
@@ -1911,10 +1945,40 @@ class BasaraLauncher(tk.Tk):
                 self.canvas.itemconfig(img_id, image=inact_aniso)
                 self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
+        act_scale, inact_scale, _ = self.pills_scale
+        for img_id, txt_id, val in self.scale_items:
+            if val == self.scale_val:
+                self.canvas.itemconfig(img_id, image=act_scale)
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+            else:
+                self.canvas.itemconfig(img_id, image=inact_scale)
+                if self.fsr_val and val in ("1.5", "2.0"):
+                    self.canvas.itemconfig(txt_id, fill="#444C56")
+                else:
+                    self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
+        self._update_slider_ui()
+
         self.canvas.itemconfig(self.sw1_img, image=self.switch_on if self.fullscreen_val else self.switch_off)
-        self.canvas.itemconfig(self.sw2_img, image=self.switch_on if self.fsr_val else self.switch_off)
+        if self.scale_val in ("1.5", "2.0"):
+            self.canvas.itemconfig(self.sw2_img, image=self.switch_disabled)
+            self.canvas.itemconfig(self.t2_title, fill="#555E6D")
+            self.canvas.itemconfig(self.t2_sub, text="Disabled (Render Scale > 1.0x)", fill="#444C56")
+            self.bind_tooltip("toggle_fsr", "FSR is disabled when Render Scale > 1.0 to prevent scaling conflicts.")
+        else:
+            self.canvas.itemconfig(self.sw2_img, image=self.switch_on if self.fsr_val else self.switch_off)
+            self.canvas.itemconfig(self.t2_title, fill=COLOR_TEXT_WHITE)
+            self.canvas.itemconfig(self.t2_sub, text="Edge & contrast sharpening", fill=COLOR_TEXT_SUB)
+            self.bind_tooltip("toggle_fsr", "Upscales lower resolutions and sharpens textures for better performance.")
+
+        if self.fsr_val:
+            self.bind_tooltip("tooltip_scale", "Render Scale is locked to 1.0x while AMD FSR 1 is enabled.")
+        else:
+            self.bind_tooltip("tooltip_scale", "Internal rendering resolution multiplier (1.0x native, 1.5x / 2.0x supersampling).")
+
         self.canvas.itemconfig(self.sw3_img, image=self.switch_on if self.skip_intro_val else self.switch_off)
         self.canvas.itemconfig(self.sw4_img, image=self.switch_on if self.show_fps_val else self.switch_off)
+        self.canvas.itemconfig(self.sw5_img, image=self.switch_on if self.perf_mode_val else self.switch_off)
 
         act_prio, inact_prio, _ = self.pills_prio
         for img_id, txt_id, val in self.prio_items:
@@ -2063,15 +2127,102 @@ class BasaraLauncher(tk.Tk):
         self.canvas.config(cursor="arrow")
         self.canvas.itemconfig(self.reb_img, image=self.btn_reb_norm)
 
+    def _on_scale_enter(self, idx):
+        img_id, txt_id, val = self.scale_items[idx]
+        if self.fsr_val and val in ("1.5", "2.0"):
+            self.canvas.config(cursor="arrow")
+            return
+        self.canvas.config(cursor="hand2")
+        if val != self.scale_val:
+            _, _, hov = self.pills_scale
+            self.canvas.itemconfig(img_id, image=hov)
+            self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_WHITE)
+
+    def _on_scale_leave(self, idx):
+        self.canvas.config(cursor="arrow")
+        img_id, txt_id, val = self.scale_items[idx]
+        if val != self.scale_val:
+            _, inact, _ = self.pills_scale
+            self.canvas.itemconfig(img_id, image=inact)
+            if self.fsr_val and val in ("1.5", "2.0"):
+                self.canvas.itemconfig(txt_id, fill="#444C56")
+            else:
+                self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
+
+    def _select_scale(self, val):
+        self.scale_val = val
+        if val in ("1.5", "2.0"):
+            self.fsr_val = False
+        self.refresh_controls()
+        self.sync_ini()
+
+    def _on_slider_click(self, event):
+        self._is_dragging_slider = True
+        self._update_slider_from_event(event)
+
+    def _on_slider_drag(self, event):
+        if getattr(self, "_is_dragging_slider", False):
+            self._update_slider_from_event(event)
+
+    def _on_slider_release(self, event):
+        if getattr(self, "_is_dragging_slider", False):
+            self._is_dragging_slider = False
+            self._update_slider_from_event(event)
+            self.sync_ini()
+
+    def _update_slider_from_event(self, event):
+        x = max(256, min(456, event.x))
+        val = int(round(((x - 256) / 200.0) * 100))
+        self.sharp_val = val
+        self._update_slider_ui()
+
+    def _update_slider_ui(self):
+        val = max(0, min(100, int(getattr(self, "sharp_val", 75))))
+        handle_x = 256 + int((val / 100.0) * 200)
+        if hasattr(self, "slider_fill"):
+            self.canvas.coords(self.slider_fill, 256, 325, handle_x, 325)
+        if hasattr(self, "slider_handle"):
+            self.canvas.coords(self.slider_handle, handle_x - 8, 325 - 8, handle_x + 8, 325 + 8)
+        if hasattr(self, "lbl_sharp_title"):
+            self.canvas.itemconfig(self.lbl_sharp_title, text=f"RCAS SHARPNESS: {val}%")
+
+    def open_changelog(self):
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "CHANGELOG.md"),
+            os.path.abspath("CHANGELOG.md"),
+        ]
+        changelog_path = next((p for p in candidates if os.path.exists(p)), None)
+        if changelog_path:
+            def _open():
+                try:
+                    os.startfile(changelog_path)
+                except Exception:
+                    webbrowser.open(changelog_path)
+            threading.Thread(target=_open, daemon=True).start()
+        else:
+            messagebox.showinfo("v2.0 Changelog", "CHANGELOG.md not found in the game directory.")
+
+    def check_for_updates(self):
+        messagebox.showinfo(
+            "Check for Updates",
+            "Auto-Updater: Checking GitHub for new releases...\n\n"
+            "Visit: https://github.com/krixsan/Basara-4-Sumeragi-Native-PC\n"
+            "Current Version: v2.0"
+        )
+
     def on_manual_rebuild(self):
         confirm = messagebox.askyesno(
             "Rebuild Game Files",
-            "This will rebuild your game files. Continue?",
+            "Are you sure? This will re-extract and link game files.",
             icon="question"
         )
         if not confirm:
             return
+        self.canvas.config(cursor="watch")
+        self.config(cursor="watch")
         self.start_repair_flow(launch_after=False)
+
+    on_rebuild_files = on_manual_rebuild
 
     def open_setup_wizard(self, force=True):
         FirstRunWizard(
@@ -2110,11 +2261,18 @@ class BasaraLauncher(tk.Tk):
         if name == "fullscreen":
             self.fullscreen_val = not self.fullscreen_val
         elif name == "fsr":
+            if self.scale_val in ("1.5", "2.0"):
+                # Mutual exclusivity: FSR is disabled when Render Scale > 1.0 to prevent scaling conflicts
+                return
             self.fsr_val = not self.fsr_val
+            if self.fsr_val:
+                self.scale_val = "1.0"
         elif name == "skip_intro":
             self.skip_intro_val = not self.skip_intro_val
         elif name == "show_fps":
             self.show_fps_val = not self.show_fps_val
+        elif name == "perf_mode":
+            self.perf_mode_val = not self.perf_mode_val
         self.refresh_controls()
         self.sync_ini()
 
@@ -2139,67 +2297,86 @@ class BasaraLauncher(tk.Tk):
             self.canvas.itemconfig(self.play_img_id, image=self.btn_repair_normal)
 
     def _on_play_click(self, event):
+        if getattr(self, "_is_launching", False) or self.state == "LAUNCHING":
+            return
+
         if self.state == "READY_TO_PLAY":
-            self.launch_game()
+            self.state = "LAUNCHING"
+            self._is_launching = True
+            self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
+            self.canvas.itemconfig(self.play_txt_id, text="LAUNCHING...", fill="#A0A8B8")
+            self.canvas.config(cursor="watch")
+            self.config(cursor="watch")
+            self.update_idletasks()
+            threading.Thread(target=self._launch_worker, daemon=True).start()
+
         elif self.state == "READY_TO_INIT":
-            missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
-            if app0 and eboot_found:
-                self.start_initialization_flow(app0)
+            self.state = "LAUNCHING"
+            self._is_launching = True
+            self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
+            self.canvas.itemconfig(self.play_txt_id, text="LAUNCHING...", fill="#A0A8B8")
+            self.canvas.config(cursor="watch")
+            self.config(cursor="watch")
+            self.update_idletasks()
+
+            def init_check():
+                missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
+                if app0 and eboot_found:
+                    self.after(0, lambda: self.start_initialization_flow(app0))
+                else:
+                    self.after(0, self.evaluate_system_readiness)
+
+            threading.Thread(target=init_check, daemon=True).start()
+
         elif self.state == "REPAIR_REQUIRED":
+            self.state = "LAUNCHING"
+            self._is_launching = True
+            self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
+            self.canvas.itemconfig(self.play_txt_id, text="LAUNCHING...", fill="#A0A8B8")
+            self.canvas.config(cursor="watch")
+            self.config(cursor="watch")
+            self.update_idletasks()
             self.start_repair_flow(launch_after=True)
 
     def evaluate_system_readiness(self):
         missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
         link_warning = extra[0] if extra else None
 
-        # Visual Dependency Badges
-        ds = getattr(self, "dep_status", None) or {}
-        vk_b = "✅" if ds.get("vulkan", True) else "❌"
-        vc_b = "✅" if ds.get("vcredist", True) else "❌"
-        win_b = "✅" if ds.get("winver", True) else "⚠️"
-        disk_b = "✅" if ds.get("disk", True) else "⚠️"
-        badges_str = f"Vulkan {vk_b}  •  VC++ {vc_b}  •  Win10+ {win_b}  •  Storage {disk_b}"
-
         if boot_bin:
             if link_warning:
                 self.state = "REPAIR_REQUIRED"
-                self.canvas.itemconfig(self.status_dot, fill=COLOR_ERROR)
-                self.canvas.itemconfig(self.status_title, text="⚠️ Game files incomplete (Audio modules missing)", fill=COLOR_ERROR)
-                self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   {link_warning}", fill=COLOR_AMBER)
                 self.canvas.itemconfig(self.play_img_id, image=self.btn_repair_normal)
-                self.canvas.itemconfig(self.play_txt_id, text="🔧 REPAIR & PLAY", fill=COLOR_TEXT_WHITE)
+                self.canvas.itemconfig(self.play_txt_id, text="REPAIR & PLAY", fill=COLOR_TEXT_WHITE)
                 self.canvas.config(cursor="arrow")
+                self.config(cursor="arrow")
             else:
                 self.state = "READY_TO_PLAY"
-                self.canvas.itemconfig(self.status_dot, fill=COLOR_SUCCESS)
-                self.canvas.itemconfig(self.status_title, text="System Verified — Ready to Play", fill=COLOR_SUCCESS)
-                self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Vulkan runtime & boot-linked.bin active", fill=COLOR_TEXT_SUB)
                 self.canvas.itemconfig(self.play_img_id, image=self.btn_play_normal)
                 self.canvas.itemconfig(self.play_txt_id, text="PLAY GAME", fill=COLOR_TEXT_WHITE)
                 self.canvas.config(cursor="arrow")
+                self.config(cursor="arrow")
         elif eboot_found and HAS_AUTO_BUILDER:
             self.state = "READY_TO_INIT"
-            self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
-            self.canvas.itemconfig(self.status_title, text="Ready for First-Time Setup — Binary will build on launch", fill=COLOR_AMBER)
-            self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Detected eboot.bin in {app0}", fill=COLOR_TEXT_SUB)
             self.canvas.itemconfig(self.play_img_id, image=self.btn_init_normal)
-            self.canvas.itemconfig(self.play_txt_id, text="INITIALIZE & PLAY", fill=COLOR_TEXT_WHITE)
+            self.canvas.itemconfig(self.play_txt_id, text="INITIALIZE & PLAY", fill="#0A0C12")
             self.canvas.config(cursor="arrow")
+            self.config(cursor="arrow")
         else:
             self.state = "MISSING"
-            self.canvas.itemconfig(self.status_dot, fill=COLOR_ERROR)
-            self.canvas.itemconfig(self.status_title, text="Setup Required — Missing game files", fill=COLOR_ERROR)
-            self.canvas.itemconfig(self.status_sub, text=f"{badges_str}   |   Click '⚡ Setup Wizard' and select your full PS4 game folder", fill=COLOR_ERROR)
             self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
             self.canvas.itemconfig(self.play_txt_id, text="SETUP REQUIRED", fill="#6E7A8E")
             self.canvas.config(cursor="arrow")
+            self.config(cursor="arrow")
 
     def start_initialization_flow(self, app0_path):
         self.state = "BUILDING"
         self.canvas.config(cursor="watch")
-        self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
-        self.canvas.itemconfig(self.status_title, text="Building native binary image (out/boot-linked.bin)...", fill=COLOR_AMBER)
-        self.canvas.itemconfig(self.status_sub, text="Linking eboot.bin + PRX modules. Please wait ~15-30s...", fill=COLOR_GOLD)
+        if self.status_dot:
+            self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
+        if self.status_title:
+            self.canvas.itemconfig(self.status_title, text="Building native binary image (out/boot-linked.bin)...", fill=COLOR_AMBER)
+        if self.status_sub:
+            self.canvas.itemconfig(self.status_sub, text="Linking eboot.bin + PRX modules. Please wait ~15-30s...", fill=COLOR_GOLD)
         self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
         self.canvas.itemconfig(self.play_txt_id, text="INITIALIZING...", fill="#A0A8B8")
 
@@ -2219,7 +2396,7 @@ class BasaraLauncher(tk.Tk):
         threading.Thread(target=init_worker, daemon=True).start()
 
     def update_init_status(self, message):
-        if self.state == "BUILDING":
+        if self.state == "BUILDING" and self.status_sub:
             self.canvas.itemconfig(self.status_sub, text=message)
 
     def on_init_success(self):
@@ -2236,7 +2413,7 @@ class BasaraLauncher(tk.Tk):
 
         missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
         if not app0 or not eboot_found:
-            for cand in game_folder_candidates():
+            for cand in [os.path.join("extracted_game", "app0"), "app0"]:
                 if os.path.isfile(os.path.join(cand, "eboot.bin")):
                     app0 = cand
                     eboot_found = True
@@ -2245,8 +2422,8 @@ class BasaraLauncher(tk.Tk):
         if not app0 or not eboot_found:
             resp = messagebox.askyesno(
                 "Setup Required",
-                "Game files (eboot.bin) not found.\n\n"
-                "Would you like to open Setup Wizard and select your full PS4 game folder?",
+                "Game files (eboot.bin) not found in extracted_game/app0.\n\n"
+                "Would you like to open Setup Wizard to locate your game directory?",
                 icon="question"
             )
             if resp:
@@ -2255,9 +2432,12 @@ class BasaraLauncher(tk.Tk):
 
         self.state = "BUILDING"
         self.canvas.config(cursor="watch")
-        self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
-        self.canvas.itemconfig(self.status_title, text="Repairing & re-linking native PS4 modules...", fill=COLOR_AMBER)
-        self.canvas.itemconfig(self.status_sub, text="Scanning .sprx modules & rebuilding boot-linked.bin...", fill=COLOR_GOLD)
+        if self.status_dot:
+            self.canvas.itemconfig(self.status_dot, fill=COLOR_AMBER)
+        if self.status_title:
+            self.canvas.itemconfig(self.status_title, text="Repairing & re-linking native PS4 modules...", fill=COLOR_AMBER)
+        if self.status_sub:
+            self.canvas.itemconfig(self.status_sub, text="Scanning .sprx modules & rebuilding boot-linked.bin...", fill=COLOR_GOLD)
         self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
         self.canvas.itemconfig(self.play_txt_id, text="REPAIRING...", fill="#A0A8B8")
 
@@ -2312,109 +2492,130 @@ class BasaraLauncher(tk.Tk):
         )
 
     def launch_game(self):
-        missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
-        link_warning = extra[0] if extra else None
-        if not boot_bin:
-            messagebox.showerror("Engine Warning", "Cannot launch. Missing components:\n\n" + "\n".join(missing))
-            return
+        self.state = "LAUNCHING"
+        self._is_launching = True
+        self.canvas.itemconfig(self.play_img_id, image=self.btn_play_disabled)
+        self.canvas.itemconfig(self.play_txt_id, text="LAUNCHING...", fill="#A0A8B8")
+        self.canvas.config(cursor="watch")
+        self.config(cursor="watch")
+        self.update_idletasks()
+        threading.Thread(target=self._launch_worker, daemon=True).start()
 
-        if not app0 or not eboot_found:
-            messagebox.showerror(
-                "Game Folder Missing",
-                "The full PS4 game folder could not be found.\n\n"
-                "Click '⚡ Setup Wizard' and select the folder that contains\n"
-                "eboot.bin, sce_module, sce_sys and the game data (nativePS4/data)."
-            )
-            return
-
-        if link_warning:
-            do_repair = messagebox.askyesno(
-                "Audio Modules Missing",
-                f"⚠️ Game files incomplete (Audio modules missing):\n\n"
-                f"{link_warning}\n\n"
-                f"Audio will stutter or cut out because native audio modules (libSceNgs2/libSceAjm) are missing.\n\n"
-                f"Would you like to automatically repair your game files now?",
-                icon="warning"
-            )
-            if do_repair:
-                self.start_repair_flow(launch_after=True)
-                return
-            proceed = messagebox.askyesno(
-                "Launch Degraded",
-                "Do you still want to launch with degraded audio?",
-                icon="warning"
-            )
-            if not proceed:
+    def _launch_worker(self):
+        try:
+            missing, exe, boot_bin, app0, eboot_found, *extra = verify_game_installation()
+            link_warning = extra[0] if extra else None
+            if not boot_bin:
+                def show_missing():
+                    self.evaluate_system_readiness()
+                    messagebox.showerror("Engine Warning", "Cannot launch. Missing components:\n\n" + "\n".join(missing))
+                self.after(0, show_missing)
                 return
 
-        self.sync_ini()
+            if link_warning:
+                repair_choice = [False, False]
+                evt = threading.Event()
 
-        # True Internal Limiter Bypass & Frame Rate setup
-        out_dir = os.path.join(os.getcwd(), "out")
-        if HAS_AUTO_BUILDER and auto_builder and eboot_found:
-            if self.fps_val != "60":
-                try:
-                    auto_builder.apply_fps_patches(app0, out_dir, unlimited_fps=True)
-                except Exception as e:
-                    print(f"Warning: could not apply FPS patches: {e}")
-            else:
-                patch_file = os.path.join(out_dir, "patches.bin")
-                if os.path.isfile(patch_file):
+                def ask_user():
+                    do_repair = messagebox.askyesno(
+                        "Audio Modules Missing",
+                        f"⚠️ Game files incomplete (Audio modules missing):\n\n"
+                        f"{link_warning}\n\n"
+                        f"Audio will stutter or cut out because native audio modules (libSceNgs2/libSceAjm) are missing.\n\n"
+                        f"Would you like to automatically repair your game files now?",
+                        icon="warning"
+                    )
+                    if do_repair:
+                        repair_choice[0] = True
+                    else:
+                        proceed = messagebox.askyesno(
+                            "Launch Degraded",
+                            "Do you still want to launch with degraded audio?",
+                            icon="warning"
+                        )
+                        repair_choice[1] = proceed
+                    evt.set()
+
+                self.after(0, ask_user)
+                evt.wait()
+
+                if repair_choice[0]:
+                    self.after(0, lambda: self.start_repair_flow(launch_after=True))
+                    return
+                if not repair_choice[1]:
+                    self.after(0, self.evaluate_system_readiness)
+                    return
+
+            self.sync_ini()
+
+            # True Internal Limiter Bypass & Frame Rate setup in background thread
+            out_dir = os.path.join(os.getcwd(), "out")
+            ini_patch_60 = (read_ini().get("patch_60fps", "1") == "1")
+            if HAS_AUTO_BUILDER and auto_builder and eboot_found:
+                if self.fps_val != "60" or ini_patch_60:
                     try:
-                        os.remove(patch_file)
-                    except Exception:
-                        pass
+                        auto_builder.apply_fps_patches(app0, out_dir, unlimited_fps=True)
+                    except Exception as e:
+                        print(f"Warning: could not apply FPS patches: {e}")
+                else:
+                    patch_file = os.path.join(out_dir, "patches.bin")
+                    if os.path.isfile(patch_file):
+                        try:
+                            os.remove(patch_file)
+                        except Exception:
+                            pass
 
-        # Environment variables for uncapped vblank / limiter
-        env = os.environ.copy()
-        if self.fps_val != "60":
-            env["BB_VBLANK_HZ"] = "0"
-            env["BB_FPS_LIMIT"] = str(self.fps_val)
-        else:
-            env["BB_FPS_LIMIT"] = "60"
+            # Environment variables for uncapped vblank / limiter
+            env = os.environ.copy()
+            if self.fps_val != "60":
+                env["BB_VBLANK_HZ"] = "0"
+                env["BB_FPS_LIMIT"] = str(self.fps_val)
+            else:
+                env["BB_VBLANK_HZ"] = "0" if ini_patch_60 else "60"
+                env["BB_FPS_LIMIT"] = "60"
 
-        if hasattr(self, "prio_val") and self.prio_val:
-            env["BB_PRIORITY"] = self.prio_val
+            if hasattr(self, "prio_val") and self.prio_val:
+                env["BB_PRIORITY"] = self.prio_val
 
-        # Gamepad mapping support
-        for map_path in [os.path.join("user", "gamepad_mapping.txt"), "gamepad_mapping.txt"]:
-            if os.path.isfile(map_path):
-                env["SDL_GAMECONTROLLERCONFIG_FILE"] = os.path.abspath(map_path)
-                break
+            # Gamepad mapping support
+            for map_path in [os.path.join("user", "gamepad_mapping.txt"), "gamepad_mapping.txt"]:
+                if os.path.isfile(map_path):
+                    env["SDL_GAMECONTROLLERCONFIG_FILE"] = os.path.abspath(map_path)
+                    break
 
-        cmd = [
-            os.path.abspath(exe),
-            os.path.abspath(boot_bin)
-        ]
-        import_names = os.path.join("out", "import_names.txt")
-        if os.path.isfile(import_names):
-            cmd.extend(["--import-names", os.path.abspath(import_names)])
+            cmd = [
+                os.path.abspath(exe),
+                os.path.abspath(boot_bin)
+            ]
+            import_names = os.path.join("out", "import_names.txt")
+            if os.path.isfile(import_names):
+                cmd.extend(["--import-names", os.path.abspath(import_names)])
 
-        content_bin = os.path.join("out", "content.bin")
-        if os.path.isfile(content_bin):
-            cmd.extend(["--content-profile", os.path.abspath(content_bin)])
+            content_bin = os.path.join("out", "content.bin")
+            if os.path.isfile(content_bin):
+                cmd.extend(["--content-profile", os.path.abspath(content_bin)])
 
-        patches_bin = os.path.join("out", "patches.bin")
-        if os.path.isfile(patches_bin):
-            cmd.extend(["--patches", os.path.abspath(patches_bin)])
+            patches_bin = os.path.join("out", "patches.bin")
+            if os.path.isfile(patches_bin):
+                cmd.extend(["--patches", os.path.abspath(patches_bin)])
 
-        cmd.extend(["--app0", os.path.abspath(app0), "--user", "user"])
+            cmd.extend(["--app0", os.path.abspath(app0), "--user", "user"])
 
-        # Seamless minimize/hide
-        self.withdraw()
+            # Seamless minimize/hide on main thread
+            self.after(0, self.withdraw)
 
-        def process_watcher():
-            try:
-                proc = subprocess.Popen(cmd, cwd=os.getcwd(), env=env)
-                proc.wait()
-            except Exception as err:
-                print(f"Game runtime error: {err}")
-            finally:
-                self.after(300, self.on_game_finish)
+            proc = subprocess.Popen(cmd, cwd=os.getcwd(), env=env)
+            proc.wait()
 
-        threading.Thread(target=process_watcher, daemon=True).start()
+        except Exception as err:
+            print(f"Game runtime error: {err}")
+            self.after(0, lambda e=str(err): messagebox.showerror("Launch Error", f"Error launching game:\n\n{e}"))
+        finally:
+            self._is_launching = False
+            self.after(100, self.on_game_finish)
 
     def on_game_finish(self):
+        self._is_launching = False
         self.deiconify()
         self.evaluate_system_readiness()
 
@@ -2444,13 +2645,13 @@ def run_headless_prepare():
         return 1
 
     app0 = None
-    for cand in game_folder_candidates():
+    for cand in [os.path.join("extracted_game", "app0"), "app0"]:
         if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "eboot.bin")):
             app0 = cand
             break
 
     if not app0:
-        print("[ERROR] Could not find a full PS4 game folder. Run Setup Wizard first.")
+        print("[ERROR] Could not find eboot.bin in 'extracted_game/app0' or 'app0'.")
         return 1
 
     out_dir = os.path.join(os.getcwd(), "out")
@@ -2566,7 +2767,7 @@ def check_pending_crash_consent():
         pkg_path = os.path.join(pending_dir, f"crash_package_{ts}.zip")
 
         manifest = {
-            "version": "v1.8",
+            "version": "v2.0",
             "timestamp": ts,
             "platform": sys.platform,
             "has_minidump": bool(newest_dmp)

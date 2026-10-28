@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport (Windows): small POSIX helpers the renderer uses for diagnostics and thread
+// engine (Windows): small POSIX helpers the renderer uses for diagnostics and thread
 // identity. Force-included into the GPU library on Windows only (CMakeLists.txt); kept free
 // of <windows.h> so its macros do not reach every translation unit.
 #pragma once
@@ -11,7 +11,7 @@ extern "C" {
 #endif
 __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 static inline int gettid(void) { return (int)GetCurrentThreadId(); }
-/* SacredFire diagnostics read guest memory that may be unmapped with process_vm_readv on
+/* Engine diagnostics read guest memory that may be unmapped with process_vm_readv on
  * Linux; on Windows ReadProcessMemory on the own process does the same (src/compat_win.c). */
 ssize_t compat_read_own_memory(void* out, const void* source, size_t size);
 struct iovec {

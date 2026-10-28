@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: FSR 3 inputs from CTR's G-buffer (docs/sacredfire/14-fsr3.md).
+// Engine: FSR 3 inputs from the game's G-buffer (docs/engine/14-fsr3.md).
 //
 // Depth: sample 0 of the scene depth (D32, possibly multisampled), copied to R32F.
 // Motion (pixels, previous minus current position, without jitter):
 // - the static world: reprojected from the depth with the camera of this frame and the last
-//   (CTR's G-buffer constants carry both views): `prev` maps a view-space position of this frame
+//   (the game's G-buffer constants carry both views): `prev` maps a view-space position of this frame
 //   to the previous frame's clip space;
-// - moving objects: CTR's velocity target (RGBA8, the motion blur's input) marks them in memory
+// - moving objects: the game's velocity target (RGBA8, the motion blur's input) marks them in memory
 //   channel 2 (red through the game's BGRA view) and stores the object's own motion, without the
 //   camera's, in channels 1 and 0 (green and blue) around 127/255. Measured on the player's kart
-//   (docs/sacredfire/14-fsr3.md) no decoding beat leaving it still on the screen (the camera
+//   (docs/engine/14-fsr3.md) no decoding beat leaving it still on the screen (the camera
 //   follows it), the default; the settings can add a decoded object term to the camera's motion.
 // `debug` replaces the frame shown with a view of these inputs (RGBA8 at render size).
 #version 450

@@ -14,7 +14,7 @@ namespace VideoCore {
 
 vk::ImageViewType ConvertImageViewType(AmdGpu::ImageType type) {
     switch (type) {
-    // sacredfire: 1D images are lowered to 2D with height 1 (shader side in spirv_emit_context).
+    // engine: 1D images are lowered to 2D with height 1 (shader side in spirv_emit_context).
     case AmdGpu::ImageType::Color1D:
     case AmdGpu::ImageType::Color2D:
     case AmdGpu::ImageType::Color2DMsaa:
@@ -139,7 +139,7 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
         aspect = vk::ImageAspectFlagBits::eStencil;
     }
 
-    // bbport: storage writes never convert to sRGB and sRGB formats cannot be storage images
+    // engine: storage writes never convert to sRGB and sRGB formats cannot be storage images
     // (AMD's driver loses the device on such a view; NVIDIA tolerates it): write through the
     // UNORM format, which stores the same bytes.
     if (info.is_storage) {

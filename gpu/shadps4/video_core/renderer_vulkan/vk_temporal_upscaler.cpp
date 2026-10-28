@@ -53,7 +53,7 @@ FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 h
     return out;
 }
 
-/// bbport: BB_DUMP_TRIGGER=<file> BB_DUMP_DIR=<dir> (default out/dump): creating the file dumps
+/// engine: BB_DUMP_TRIGGER=<file> BB_DUMP_DIR=<dir> (default out/dump): creating the file dumps
 /// the upscaler's images of the next BB_DUMP_FRAMES (8) frames as raw files
 /// <dir>/fNNN_<name>_<w>x<h>_<format>.raw, for checking temporal stability offline.
 /// Returns the frame number to dump, or -1.
@@ -338,7 +338,7 @@ bool TemporalUpscaler::RasterScaling() const {
 }
 
 bool TemporalUpscaler::OnFrameStart() {
-    // bbport: BB_PRESET_FILE=<file> holding a preset number, read about once a second: switches
+    // engine: BB_PRESET_FILE=<file> holding a preset number, read about once a second: switches
     // the preset like the menu does (scripted tests of live preset changes).
     static const char* preset_file = std::getenv("BB_PRESET_FILE");
     if (preset_file && ++preset_file_frames % 64 == 0) {
@@ -894,7 +894,7 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h) {
         }
         target_view = *ui_storage_view;
     }
-    // bbport: the commands are recorded through the scheduler (a recording thread for FSR 3).
+    // engine: the commands are recorded through the scheduler (a recording thread for FSR 3).
     scheduler.RecordCrumb({.name = "TAA extra sharpen"}, [target, copy = vk::Image(extra_sharpen_image),
                       copy_view = *extra_sharpen_view, target_view, extra, w, h,
                       pipeline = ldr ? *taa_sharpen_ldr_pipeline : *taa_sharpen_pipeline,
@@ -949,7 +949,7 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h) {
 }
 
 void TemporalUpscaler::OnBlendedSceneDraw() {
-    // The mask is opt-in (menu, BB_REACTIVE=1): on Bloodborne's thin mist it trades trails for
+    // The mask is opt-in (menu, BB_REACTIVE=1): on the engine's thin mist it trades trails for
     // jitter shimmer, which looked worse. Toggle 1 << 27 switches it off.
     if (snapshot_taken || !scene_color || !Active() || !ReactiveOn()) {
         return;
@@ -1298,7 +1298,7 @@ void TemporalUpscaler::Run() {
         if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
             ExtraSharpen(vk::Image(output_image), false, ow, oh);
         }
-        // bbport: BB_DUMP_TRIGGER on this (HDR scene color) path too: the upscaler's inputs and
+        // engine: BB_DUMP_TRIGGER on this (HDR scene color) path too: the upscaler's inputs and
         // its result, for ghosting and history checks (tools/dump_view.py).
         if (const int dump = DumpFrame(); dump >= 0) {
             camera_motion.PrintState(dump);
@@ -1580,7 +1580,7 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
                 vk::Offset3D{s32(ui_width), s32(ui_height), 1}},
         };
     }
-    // bbport: recorded on the recording thread (direct recording here waited for it to finish
+    // engine: recorded on the recording thread (direct recording here waited for it to finish
     // everything queued, every frame).
     scheduler.Record([depth = vk::Image(ui_depth_image), range, source,
                       region](vk::CommandBuffer cmd) {
@@ -1734,7 +1734,7 @@ void TemporalUpscaler::RunScaled() {
     }
 
     scheduler.EndRendering();
-    // bbport: the motion pass and FSR 3 are recorded through the scheduler, on a recording
+    // engine: the motion pass and FSR 3 are recorded through the scheduler, on a recording
     // thread (recording them here cost the draw recording thread ~5% of its time, plus a wait
     // for the recording thread every frame). FSR 4 and TAA keep their frame bookkeeping on
     // this thread and record directly below.
@@ -1778,7 +1778,7 @@ void TemporalUpscaler::RunScaled() {
     }
     last_frame = now;
 
-    // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
+    // engine: FSR 4 writes its HDR-format output, copied into the output-size UI image.
     if (UseFsr4() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
         const auto cmdbuf = scheduler.CommandBuffer(); // after the commands recorded above
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
@@ -1788,7 +1788,7 @@ void TemporalUpscaler::RunScaled() {
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
         } else {
-            // bbport: FSR 4 treats its colour as linear light; this frame is the game's
+            // engine: FSR 4 treats its colour as linear light; this frame is the game's
             // tonemapped, sRGB-encoded one. Decoded first, the output encoded again below.
             // BB_FSR4_LINEAR=0 or toggle bit 63: the encoded frame as before (A/B).
             static const bool linear_env = [] {

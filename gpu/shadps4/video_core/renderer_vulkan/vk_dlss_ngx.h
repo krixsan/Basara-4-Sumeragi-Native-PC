@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 IFreemz
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: from IFreemz/shadPS4-Bloodborne-DLSS-FSR (vk_dlss_ngx), one process-wide instance
-// (DlssNgx::Get) and the bridge named sacredfire_dlss.dll.
+// Engine: from IFreemz/shadPS4-the engine-DLSS-FSR (vk_dlss_ngx), one process-wide instance
+// (DlssNgx::Get) and the bridge named engine_dlss.dll.
 
 #pragma once
 
@@ -14,7 +14,7 @@
 
 namespace Vulkan {
 
-// Loads the optional DLSS bridge (sacredfire_dlss.dll, dlss_bridge/) next to the executable. The
+// Loads the optional DLSS bridge (engine_dlss.dll, dlss_bridge/) next to the executable. The
 // port itself contains no NVIDIA code; without the bridge (or on other GPUs) nothing changes.
 // Callers own synchronization and must drain recorded work before releasing a feature.
 class DlssNgx {

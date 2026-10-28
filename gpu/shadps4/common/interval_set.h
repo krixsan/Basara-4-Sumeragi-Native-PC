@@ -85,7 +85,7 @@ public:
         Coalesce(at, m);
     }
 
-    /// bbport: removes a range from the set (parts of intervals outside it stay).
+    /// engine: removes a range from the set (parts of intervals outside it stay).
     void Subtract(u64 start, u64 end) {
         if (start >= end) [[unlikely]] {
             return;

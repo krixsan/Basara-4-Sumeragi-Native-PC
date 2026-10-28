@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: speculative draw preparation on worker threads (docs/parallel_gpu.md, steps 1-2).
+// engine: speculative draw preparation on worker threads (docs/parallel_gpu.md, steps 1-2).
 //
 // Every submitted graphics command buffer is copied. A scanner thread replays the register
 // writes of the whole stream in order (ApplyGraphicsRegisterPacket, the same code the GPU
@@ -152,7 +152,7 @@ private:
     std::shared_ptr<Submission> current;
 
 public:
-    /// bbport: the current submission (prepared draws), for the draw recording thread to keep
+    /// engine: the current submission (prepared draws), for the draw recording thread to keep
     /// it alive while it still records its draws.
     [[nodiscard]] std::shared_ptr<const void> KeepCurrent() const {
         return current;

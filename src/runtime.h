@@ -7,7 +7,7 @@
 #ifdef _WIN32
 #include "compat_win.h"
 /* No signals on Windows: the exception handler resumes the thread in bb_longjmp
- * (gpu/shim/bbport_toggles.h uses the same buffer type). */
+ * (gpu/shim/port_toggles.h uses the same buffer type). */
 typedef bb_jmp_buf sigjmp_buf;
 #define sigsetjmp(buffer, save) bb_setjmp(buffer)
 #else
@@ -39,11 +39,11 @@ int runtime_memory_vma_info(uintptr_t address, int *prot, int *type, uintptr_t *
 /* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);
-/* bbport (frame stats): a guest thread was blocked `ns` in the runtime (0 cond, 1 mutex, 2 sema, 3 sleep). */
+/* engine (frame stats): a guest thread was blocked `ns` in the runtime (0 cond, 1 mutex, 2 sema, 3 sleep). */
 void runtime_wait_note(int kind, uint64_t ns);
 void runtime_wait_report(double frames);
 void runtime_guest_call_sites(uint64_t out[3]);
-/* bbport: times the game's heap asked for more memory (posix_mmap): a sign it leaks. */
+/* engine: times the game's heap asked for more memory (posix_mmap): a sign it leaks. */
 uint64_t runtime_heap_growths(void);
 static inline uint64_t runtime_wait_clock(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (uint64_t)t.tv_sec*1000000000+(uint64_t)t.tv_nsec; }
 const char *runtime_import_name(const char *name);
@@ -75,7 +75,7 @@ void runtime_content_report(void);
 typedef struct { const char *name; void *function; } RuntimeExport;
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 const char *runtime_symbol(const char *nid);
-/* SacredFire: imports are named "NID#library" (link_modules.py); a pattern "NID" matches the NID from
+/* Engine: imports are named "NID#library" (link_modules.py); a pattern "NID" matches the NID from
  * any library, "NID#library" only from that library. The eboot's own index suffixes never reach here. */
 static inline int runtime_nid_equals(const char *name, const char *pattern) {
     const char *h = strchr(name, '#'), *k = strchr(pattern, '#');
@@ -91,11 +91,11 @@ static inline int runtime_nid_equals(const char *name, const char *pattern) {
 int runtime_load_import_names(const char *path);
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid);
 uintptr_t runtime_kernel_resolve(const char *name);
-/* SacredFire: a guest thread is ending: libc's thread destructors (_sceKernelSetThreadDtors) run first. */
+/* Engine: a guest thread is ending: libc's thread destructors (_sceKernelSetThreadDtors) run first. */
 void runtime_kernel_thread_exit(void);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
-/* SacredFire: online play (runtime_net.c); answers nothing unless BB_ONLINE_SERVER is set. */
+/* Engine: online play (runtime_net.c); answers nothing unless BB_ONLINE_SERVER is set. */
 uintptr_t runtime_net_resolve(const char *name);
 void runtime_file_report(void);
 void runtime_file_configure(const char *app0, const char *user);
@@ -127,8 +127,8 @@ void runtime_audio_catchup_render(const void *data, uint32_t frames);
 void runtime_audio_play_movie_pcm16(const void *pcm16, uint32_t size_bytes, uint32_t channels, uint32_t sample_rate);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
-/* SacredFire: controller ports for split screen. Port 1 is the player's pad (keyboard too); ports
- * 2..4 take the gamepad named in bbport.ini (port.N=<GUID or part of the name>, written by the
+/* Controller ports for split screen. Port 1 is the player's pad (keyboard too); ports
+ * 2..4 take the gamepad named in basara.ini (port.N=<GUID or part of the name>, written by the
  * in-game menu) and appear to the game as logged-in users 2..4 while that gamepad is connected. */
 int runtime_pad_user_present(int user);
 void runtime_services_user_change(int user, int login);

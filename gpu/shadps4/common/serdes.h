@@ -12,7 +12,7 @@
 
 namespace Serialization {
 
-/// bbport: a cache entry that cannot be used: shorter than what it claims to hold (a file cut
+/// engine: a cache entry that cannot be used: shorter than what it claims to hold (a file cut
 /// short by a crash or a power loss, issue #28), or rejected by the driver while preloading. The
 /// pipeline cache drops the entry and compiles it again instead of stopping the game.
 struct CorruptData : std::runtime_error {

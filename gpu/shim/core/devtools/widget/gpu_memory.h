@@ -1,4 +1,4 @@
-// bbport: devtools GPU memory viewer is not part of the port.
+// engine: devtools GPU memory viewer is not part of the port.
 #pragma once
 #include <string>
 #include <vector>

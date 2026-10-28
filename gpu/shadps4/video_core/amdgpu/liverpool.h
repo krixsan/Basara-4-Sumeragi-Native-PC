@@ -74,10 +74,10 @@ struct Liverpool {
     Regs regs{};
     std::array<CbDbExtent, NUM_COLOR_BUFFERS> last_cb_extent{};
     CbDbExtent last_db_extent{};
-    /// bbport: register blocks written since the last draw handed to the draw recording thread
+    /// engine: register blocks written since the last draw handed to the draw recording thread
     /// (Rasterizer::PostDraw sends them along).
     RegDirty pipe_dirty;
-    /// bbport: fence writes handed to the draw recording thread and not yet done there: a
+    /// engine: fence writes handed to the draw recording thread and not yet done there: a
     /// WaitRegMem on one of them is met in stream order without waiting for that thread.
     struct PendingFence {
         VAddr address;
@@ -89,7 +89,7 @@ struct Liverpool {
     void NotePendingFences(const auto& event);
     bool PendingFenceValue(VAddr address, u32& value);
     void NotePendingWrite(const struct PM4CmdWriteData& write_data, u32 num_bytes);
-    /// bbport: running checksum of graphics-register packets (see ApplyGraphicsRegisterPacket).
+    /// engine: running checksum of graphics-register packets (see ApplyGraphicsRegisterPacket).
     u64 gfx_reg_checksum{};
     /// Top-level graphics submissions, numbered for the draw preparation workers.
     static constexpr u64 NoSeq = ~0ull;
@@ -126,7 +126,7 @@ public:
         submit_cv.wait(lk, [this] { return num_submits == 0; });
     }
 
-    /// bbport: also the draw recording thread and the fences it deferred are done (see
+    /// engine: also the draw recording thread and the fences it deferred are done (see
     /// work_retired). sceGnmSubmitDone does not block the guest when this is true.
     bool IsGpuIdle() const {
         static const bool use_retired = [] {
@@ -236,10 +236,10 @@ private:
 
     using CmdBuffer = std::pair<std::span<const u32>, std::span<const u32>>;
     CmdBuffer CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb);
-    /// bbport: a submission's command buffers copied when the guest submits them
+    /// engine: a submission's command buffers copied when the guest submits them
     /// (BB_COPY_GPU_BUFFERS): the guest reused their memory before the GPU thread decoded
     /// them ("PM4 type 0" from zeros or the next frame's commands, while an area loads).
-    /// SacredFire issue #2: the copy's storage comes from BbClobber (whole, page-aligned pages
+    /// Engine issue #2: the copy's storage comes from BbClobber (whole, page-aligned pages
     /// with BB_COPY_PROTECT=1, so that the copy can be read-only while it is decoded).
     template <typename T>
     struct CopyAllocator {
@@ -331,11 +331,11 @@ private:
     /// BB_HONEST_LABELS: GPU idle once the GPU has finished the work up to `generation` and nothing
     /// was submitted since (the interrupt, work_retired).
     void SignalGpuIdle(u64 generation);
-    /// bbport: false from a submission until its draws and deferred fences are done (stage A
+    /// engine: false from a submission until its draws and deferred fences are done (stage A
     /// decrements num_submits once it has decoded a submission, before that). Under
     /// submit_mutex with num_submits.
     std::atomic<bool> work_retired{true};
-    /// bbport: submissions so far (submit_mutex): BB_HONEST_LABELS GPU idle checks none came since.
+    /// engine: submissions so far (submit_mutex): BB_HONEST_LABELS GPU idle checks none came since.
     u64 submissions_total = 0;
     std::atomic<u32> num_commands{};
     std::atomic<bool> submit_done{};

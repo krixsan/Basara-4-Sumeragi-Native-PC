@@ -73,7 +73,7 @@ int compat_errno_from_win32(unsigned long error);
 /* User and kernel CPU time of the process (who=0) or calling thread (who=1), microseconds. */
 int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
 /* Host thread id (GetCurrentThreadId) and the top of the calling thread's stack
- * (SacredFire: frame statistics). */
+ * (Engine: frame statistics). */
 unsigned long compat_thread_id(void);
 /* The processor the calling thread runs on (sched_getcpu). */
 int compat_current_cpu(void);

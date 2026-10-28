@@ -1,4 +1,4 @@
-// bbport: BB_CE_STATS=1 — what the constant engine's dumps feed (GPU command thread only):
+// engine: BB_CE_STATS=1 — what the constant engine's dumps feed (GPU command thread only):
 // how many DumpConstRam a second, how many bytes and pages, and how often the translator then
 // reads memory a dump wrote in the last 100 ms, by kind. Measures what a translation of the
 // constant engine has to keep visible to the translator (docs/EMULATION_REMOVAL_PLAN.ru.md).

@@ -77,10 +77,10 @@ struct ImageOperands {
 
     spv::ImageOperandsMask mask{};
     boost::container::static_vector<Id, 4> operands;
-    bool pad_1d{false}; ///< sacredfire: the image is a lowered 1D texture
+    bool pad_1d{false}; ///< engine: the image is a lowered 1D texture
 };
 
-// sacredfire: 1D images are declared as 2D (height 1); their coordinates, offsets and
+// engine: 1D images are declared as 2D (height 1); their coordinates, offsets and
 // derivatives gain a zero second component here. 1D arrays become 2D arrays: (x, slice) -> (x, 0, slice).
 static bool Is1D(AmdGpu::ImageType type) {
     return type == AmdGpu::ImageType::Color1D || type == AmdGpu::ImageType::Color1DArray;

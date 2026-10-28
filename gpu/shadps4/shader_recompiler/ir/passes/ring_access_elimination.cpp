@@ -115,8 +115,8 @@ void RingAccessElimination(const IR::Program& program, const RuntimeInfo& runtim
                                  2;
                 const auto soffset = IR::GetBufferSOffsetArg(&inst);
                 auto bucket = soffset.U32() / 256u;
-                // sacredfire: the ESGS ring stores input vertices consecutively, one component per
-                // 256-byte slot and in_vertex_data_size components per vertex. CTR's fur geometry
+                // engine: the ESGS ring stores input vertices consecutively, one component per
+                // 256-byte slot and in_vertex_data_size components per vertex. the game's fur geometry
                 // shader addresses the second input vertex through the slot offset instead of the
                 // vertex offset register; a slot past the first vertex belongs to the next one.
                 // Without this the shader declared 15 input locations (over the 64-component
@@ -124,7 +124,7 @@ void RingAccessElimination(const IR::Program& program, const RuntimeInfo& runtim
                 const u32 in_vertex_dwords = gs_info.in_vertex_data_size;
                 if (bucket >= 32u) {
                     LOG_WARNING(Render_Vulkan,
-                                "sacredfire GS ring read: slot {} vertex {} (esgs itemsize {} dwords, "
+                                "engine GS ring read: slot {} vertex {} (esgs itemsize {} dwords, "
                                 "gsvs itemsize {}, copy comps {}, in_primitive {})",
                                 bucket, vertex_id, in_vertex_dwords, gs_info.out_vertex_data_size,
                                 program.info.gs_copy_data.num_comps, u32(gs_info.in_primitive));

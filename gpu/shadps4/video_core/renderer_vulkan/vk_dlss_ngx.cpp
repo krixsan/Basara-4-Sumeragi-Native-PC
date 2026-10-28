@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 IFreemz
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: from IFreemz/shadPS4-Bloodborne-DLSS-FSR (vk_dlss_ngx); logging to stdout (the
+// Engine: from IFreemz/shadPS4-the engine-DLSS-FSR (vk_dlss_ngx); logging to stdout (the
 // port's log), one process-wide instance.
 
 #include <algorithm>
@@ -25,7 +25,7 @@
 namespace Vulkan {
 
 namespace {
-constexpr wchar_t BridgeName[] = L"sacredfire_dlss.dll";
+constexpr wchar_t BridgeName[] = L"engine_dlss.dll";
 constexpr wchar_t NgxName[] = L"nvngx_dlss.dll";
 
 std::filesystem::path ExecutableDirectory() {
@@ -105,7 +105,7 @@ DlssNgx::DlssNgx() : impl{std::make_unique<Impl>()} {
     impl->api = get_api ? get_api() : nullptr;
     if (!impl->api || impl->api->abi != SHADPS4_DLSS_BRIDGE_ABI) {
         impl->api = nullptr;
-        impl->Disable("sacredfire_dlss.dll is missing or from another version");
+        impl->Disable("engine_dlss.dll is missing or from another version");
         return;
     }
     const auto data = directory / "dlss";

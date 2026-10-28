@@ -181,17 +181,17 @@ void AskForReport() {
     }
     std::fflush(stdout);
     std::fprintf(stderr,
-                 "\nSacredFire issue #2: the known \"clobbered dword\" bug just happened (a dword of a "
+                 "\nEngine issue #2: the known \"clobbered dword\" bug just happened (a dword of a "
                  "submitted command buffer turned into 1); the lines above are its diagnostics.\n"
-                 "SacredFire issue #2: please attach this whole log to "
-                 "https://github.com/T3CHNOLOG1C/SacredFire/issues/2 (launcher: Log page, \"Export "
+                 "Engine issue #2: please attach this whole log to "
+                 "https://github.com/T3CHNOLOG1C/Engine/issues/2 (launcher: Log page, \"Export "
                  "log...\") so that the writer can be found and fixed.\n\n");
     std::fflush(stderr);
 }
 
 bool ProtectCopies() {
 #ifdef _WIN32
-    return false; // SacredFire (Windows): BB_COPY_PROTECT uses mprotect and SIGSEGV (Linux only)
+    return false; // Engine (Windows): BB_COPY_PROTECT uses mprotect and SIGSEGV (Linux only)
 #endif
     static const bool enabled = [] {
         const char* env = std::getenv("BB_COPY_PROTECT");

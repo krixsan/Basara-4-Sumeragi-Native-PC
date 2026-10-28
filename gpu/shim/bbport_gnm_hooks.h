@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: hooks on the entry points of the eboot's libGnm (sce::Gnm command buffer methods, linked
+// engine: hooks on the entry points of the eboot's libGnm (sce::Gnm command buffer methods, linked
 // statically into the game: it writes its own PM4). They are the game's graphics API, the level a
 // translation layer like DXVK sits at. BB_GNM_CENSUS=1 counts the calls per function and prints
 // the busiest every 5 s; later steps replace the functions themselves.

@@ -47,7 +47,7 @@ static ABI int32_t module_load(uint16_t id) {
     else printf("Runtime: system module 0x%x loaded (host implementation)\n",id);
     return 0;
 }
-/* SacredFire: sceSysmoduleLoadModuleInternalWithArg: internal module ids are 0x8000xxxx; the
+/* Engine: sceSysmoduleLoadModuleInternalWithArg: internal module ids are 0x8000xxxx; the
  * module's start arguments are ignored and the module's start result is 0. */
 static ABI int32_t module_load_internal(uint32_t id,uint64_t argc,const void *argv,uint32_t flags,const void *option,int32_t *result) {
     (void)argc; (void)argv; (void)flags; (void)option;

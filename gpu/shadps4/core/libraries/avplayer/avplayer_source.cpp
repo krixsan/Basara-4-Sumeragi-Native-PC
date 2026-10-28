@@ -11,6 +11,10 @@
 #include "core/memory.h"
 
 #include <magic_enum/magic_enum.hpp>
+#include <deque>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -27,6 +31,66 @@ extern "C" int runtime_file_translate(const char* guest, char* out, size_t size)
 extern "C" void runtime_audio_stop_movie(void);
 
 namespace Libraries::AvPlayer {
+
+// v2.1.2: Diagnostic instrumentation for video freeze diagnosis
+static bool g_avplayer_trace_enabled = false;
+static bool g_avplayer_force_deliver = false;
+static std::mutex g_trace_ring_mutex;
+static std::deque<std::pair<u64, std::string>> g_trace_ring;  // Last 100 events
+
+// Ring buffer event logging
+static void LogTraceEvent(const std::string& event) {
+    if (!g_avplayer_trace_enabled) return;
+    
+    std::unique_lock lock(g_trace_ring_mutex);
+    auto now = std::chrono::high_resolution_clock::now();
+    static auto start = now;
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+    
+    g_trace_ring.emplace_back(elapsed, event);
+    if (g_trace_ring.size() > 100) {
+        g_trace_ring.pop_front();
+    }
+}
+
+static void DumpTraceRingToFile() {
+    if (!g_avplayer_trace_enabled) return;
+    
+    std::unique_lock lock(g_trace_ring_mutex);
+    std::ofstream log_file("avplayer_trace.log", std::ios::app);
+    log_file << "\n========== TRACE RING DUMP (Last 100 Events) ==========\n";
+    for (const auto& [timestamp, event] : g_trace_ring) {
+        log_file << "[" << std::setw(6) << timestamp << "ms] " << event << "\n";
+    }
+    log_file << "========================================================\n";
+    log_file.close();
+    
+    fprintf(stderr, "[AV_TRACE] Dumped ring buffer to avplayer_trace.log\n");
+}
+
+static void InitTracing() {
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+    
+    const char* trace_env = std::getenv("BASARA_AVPLAYER_TRACE");
+    g_avplayer_trace_enabled = (trace_env != nullptr && trace_env[0] == '1');
+    
+    const char* force_env = std::getenv("BASARA_AVPLAYER_FORCE_DELIVER");
+    g_avplayer_force_deliver = (force_env != nullptr && force_env[0] == '1');
+    
+    if (g_avplayer_trace_enabled) {
+        fprintf(stderr, "[AV_TRACE] Instrumentation ENABLED (set BASARA_AVPLAYER_TRACE=0 to disable)\n");
+        std::ofstream log_file("avplayer_trace.log", std::ios::trunc);
+        log_file << "===== Basara 4 AvPlayer Diagnostic Trace =====\n";
+        log_file << "Timestamp (ms) | Event\n";
+        log_file.close();
+    }
+    
+    if (g_avplayer_force_deliver) {
+        fprintf(stderr, "[AV_VIDEO] FORCE_DELIVER ENABLED - timestamp gating BYPASSED (diagnostic mode)\n");
+    }
+}
 
 static AvPlayerStreamType CodecTypeToStreamType(AVMediaType codec_type) {
     switch (codec_type) {
@@ -82,7 +146,7 @@ bool AvPlayerSource::Init(const AvPlayerInitData& init_data, std::string_view pa
             return false;
         }
     } else {
-        // bbport: guest paths are translated by the port's file system (runtime_file.c).
+        // engine: guest paths are translated by the port's file system (runtime_file.c).
         char host[1024];
         if (runtime_file_translate(std::string(path).c_str(), host, sizeof(host)) != 0) {
             LOG_ERROR(Lib_AvPlayer, "Cannot translate guest path {}", path);
@@ -242,8 +306,13 @@ bool AvPlayerSource::Start() {
     if (m_video_stream_index) {
         const auto stream_index = m_streams[m_video_stream_index.value()].ffmpeg_index;
         const auto stream = m_avformat_context->streams[stream_index];
-        avformat_seek_file(m_avformat_context.get(), m_video_stream_index.value(), 0, 0,
+        // BUG FIX 2 (P0): Check seek return value
+        const auto seek_result = avformat_seek_file(m_avformat_context.get(), m_video_stream_index.value(), 0, 0,
                            stream->duration, 0);
+        if (seek_result < 0) {
+            LOG_ERROR(Lib_AvPlayer, "Could not seek video stream to start: error = {}", seek_result);
+            return false;
+        }
         const auto decoder = avcodec_find_decoder(stream->codecpar->codec_id);
         if (decoder == nullptr) {
             return false;
@@ -270,8 +339,13 @@ bool AvPlayerSource::Start() {
     if (m_audio_stream_index) {
         const auto stream_index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
         const auto stream = m_avformat_context->streams[stream_index];
-        avformat_seek_file(m_avformat_context.get(), m_audio_stream_index.value(), 0, 0,
+        // BUG FIX 2 (P0): Check seek return value
+        const auto seek_result = avformat_seek_file(m_avformat_context.get(), m_audio_stream_index.value(), 0, 0,
                            stream->duration, 0);
+        if (seek_result < 0) {
+            LOG_ERROR(Lib_AvPlayer, "Could not seek audio stream to start: error = {}", seek_result);
+            return false;
+        }
         const auto decoder = avcodec_find_decoder(stream->codecpar->codec_id);
         if (decoder == nullptr) {
             return false;
@@ -295,10 +369,16 @@ bool AvPlayerSource::Start() {
             m_audio_buffers.Push(GuestBuffer(m_memory_replacement, 0x10, size, false));
         }
     }
+    m_frames_delivered.store(0);
+    m_video_frames_delivered.store(0);
     m_demuxer_thread.Run([this](std::stop_token stop) { this->DemuxerThread(stop); });
     m_video_decoder_thread.Run([this](std::stop_token stop) { this->VideoDecoderThread(stop); });
     m_audio_decoder_thread.Run([this](std::stop_token stop) { this->AudioDecoderThread(stop); });
+    m_watchdog_thread.Run([this](std::stop_token stop) { this->WatchdogThread(stop); });
     m_start_time = std::chrono::high_resolution_clock::now();
+    // Reset timestamp rebase on start
+    m_video_ts_rebase.reset();
+    m_audio_ts_rebase.reset();
     return true;
 }
 
@@ -318,6 +398,7 @@ bool AvPlayerSource::Stop() {
     m_video_decoder_thread.Stop();
     m_audio_decoder_thread.Stop();
     m_demuxer_thread.Stop();
+    m_watchdog_thread.Stop();
 
     m_current_audio_frame.reset();
     m_current_video_frame.reset();
@@ -334,6 +415,10 @@ bool AvPlayerSource::Stop() {
     m_start_time.reset();
     m_pause_time = {};
     m_pause_duration = {};
+
+    // Reset timestamp rebase on stop
+    m_video_ts_rebase.reset();
+    m_audio_ts_rebase.reset();
 
     m_is_paused = false;
     m_is_eof = false;
@@ -366,19 +451,53 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfo& video_info) {
 }
 
 bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
+    InitTracing();
+    
+    // v2.1.2: Entry instrumentation
+    if (g_avplayer_trace_enabled) {
+        std::ostringstream oss;
+        oss << "GetVideoData: entry - video_frames=" << m_video_frames.Size() 
+            << " video_buffers=" << m_video_buffers.Size()
+            << " current_frame=" << (m_current_video_frame.has_value() ? "yes" : "no");
+        LogTraceEvent(oss.str());
+    }
+    
     if (!IsActive() || m_is_paused) {
+        if (g_avplayer_trace_enabled) {
+            LogTraceEvent(std::string("GetVideoData: return false - ") + 
+                         (!IsActive() ? "not_active" : "paused"));
+        }
         return false;
     }
 
     if (m_video_frames.Size() == 0) {
+        if (g_avplayer_trace_enabled) {
+            LogTraceEvent("GetVideoData: return false - empty_queue");
+        }
         return false;
     }
 
     const auto current_time = CurrentTime();
     const auto& new_frame = m_video_frames.Front();
-    if (m_state.GetSyncMode() == AvPlayerAvSyncMode::Default) {
+    const auto sync_mode = m_state.GetSyncMode();
+    
+    // v2.1.2: Timestamp gate instrumentation (critical for diagnosis)
+    if (sync_mode == AvPlayerAvSyncMode::Default && !g_avplayer_force_deliver) {
         if (new_frame.info.timestamp > current_time) {
+            if (g_avplayer_trace_enabled) {
+                std::ostringstream oss;
+                oss << "GetVideoData: GATED (timestamp=" << new_frame.info.timestamp 
+                    << " > current=" << current_time << ")";
+                LogTraceEvent(oss.str());
+            }
             return false;
+        }
+    } else if (g_avplayer_force_deliver) {
+        if (g_avplayer_trace_enabled) {
+            std::ostringstream oss;
+            oss << "GetVideoData: FORCE_DELIVER - ts=" << new_frame.info.timestamp 
+                << " curr=" << current_time << " (gate bypassed)";
+            LogTraceEvent(oss.str());
         }
     }
 
@@ -392,10 +511,24 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
     video_info = frame->info;
 
     m_current_video_frame = std::move(frame);
+    m_frames_delivered.fetch_add(1, std::memory_order_relaxed);
+    m_video_frames_delivered.fetch_add(1, std::memory_order_relaxed);
+    
+    if (g_avplayer_trace_enabled) {
+        std::ostringstream oss;
+        oss << "GetVideoData: delivered - ts=" << video_info.timestamp
+            << " remaining=" << m_video_frames.Size()
+            << " buffers=" << m_video_buffers.Size();
+        LogTraceEvent(oss.str());
+    }
+    
     return true;
 }
 
 bool AvPlayerSource::GetAudioData(AvPlayerFrameInfo& audio_info) {
+    static u64 call_count = 0;
+    call_count++;
+    
     if (!IsActive() || m_is_paused) {
         return false;
     }
@@ -422,6 +555,17 @@ bool AvPlayerSource::GetAudioData(AvPlayerFrameInfo& audio_info) {
     audio_info.details.audio.size = frame->info.details.audio.size;
     audio_info.details.audio.channel_count = frame->info.details.audio.channel_count;
     m_current_audio_frame = std::move(frame);
+    m_frames_delivered.fetch_add(1, std::memory_order_relaxed);
+    
+    // v2.1.2: Log first 5 calls and every 60th call
+    if (g_avplayer_trace_enabled && (call_count <= 5 || call_count % 60 == 0)) {
+        std::ostringstream oss;
+        oss << "GetAudioData: call=" << call_count
+            << " ts=" << audio_info.timestamp
+            << " remaining=" << m_audio_frames.Size();
+        LogTraceEvent(oss.str());
+    }
+    
     return true;
 }
 
@@ -478,10 +622,38 @@ u64 AvPlayerSource::CurrentTime() {
 
     using namespace std::chrono;
     const auto now = m_is_paused.load() ? m_pause_time : high_resolution_clock::now();
+    
+    // BUG FIX 1 (P0): Audio clock fallback for deadlock prevention
+    // If audio stream exists, use audio timing as primary but validate against wall clock
     if (m_audio_stream_index && m_last_data_time.has_value()) {
-        const auto elapsed =
+        const auto audio_elapsed =
             duration_cast<milliseconds>(now - m_last_data_time.value() - m_pause_duration).count();
-        return m_last_audio_ts.value_or(0) + (elapsed > 0 ? u64(elapsed) : 0ULL);
+        const auto audio_time = m_last_audio_ts.value_or(0) + (audio_elapsed > 0 ? u64(audio_elapsed) : 0ULL);
+        
+        // Compute wall-clock time from m_start_time as fallback
+        const auto wall_elapsed =
+            duration_cast<milliseconds>(now - m_start_time.value() - m_pause_duration).count();
+        const auto wall_time = wall_elapsed > 0 ? u64(wall_elapsed) : 0ULL;
+        
+        // If audio clock drifts >1000ms from wall clock, use wall clock instead
+        // This prevents video playback from blocking when audio pipeline stalls
+        const s64 drift = s64(audio_time) - s64(wall_time);
+        if (std::abs(drift) > 1000) {
+            // Rate-limit logging: max once per 500ms
+            static auto last_log_time = high_resolution_clock::now();
+            const auto now_log = high_resolution_clock::now();
+            if (duration_cast<milliseconds>(now_log - last_log_time).count() >= 500) {
+                LOG_WARNING(Lib_AvPlayer, 
+                    "[AV_TIMING] Audio clock drift >1s detected, using wall clock (audio={}ms, wall={}ms, drift={}ms)",
+                    audio_time, wall_time, drift);
+                fprintf(stderr, "[AV_TIMING] Audio clock drift >1s, using wall clock (audio=%llums, wall=%llums)\n", 
+                        (unsigned long long)audio_time, (unsigned long long)wall_time);
+                last_log_time = now_log;
+            }
+            return wall_time;
+        }
+        
+        return audio_time;
     }
 
     const auto elapsed =
@@ -538,13 +710,29 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvDemuxer");
 
+    InitTracing(); // v2.1.2: tracing init
+
     if (!m_audio_stream_index.has_value() && !m_video_stream_index.has_value()) {
         LOG_WARNING(Lib_AvPlayer, "Could not start DEMUXER thread. No streams enabled.");
         return;
     }
     LOG_INFO(Lib_AvPlayer, "Demuxer Thread started");
+    auto last_status_time = steady_clock::now(); // v2.1.2: periodic status timer
 
     while (!stop.stop_requested()) {
+        // v2.1.2: Periodic status dump
+        if (g_avplayer_trace_enabled) {
+            auto now = steady_clock::now();
+            if (duration_cast<seconds>(now - last_status_time).count() >= 5) {
+                std::ostringstream oss;
+                oss << "DemuxerThread: status - video_packets=" << m_video_packets.Size()
+                    << " audio_packets=" << m_audio_packets.Size()
+                    << " video_frames=" << m_video_frames.Size()
+                    << " audio_frames=" << m_audio_frames.Size();
+                LogTraceEvent(oss.str());
+                last_status_time = now;
+            }
+        }
         if (m_video_packets.Size() > 30 &&
             (!m_audio_stream_index.has_value() || m_audio_packets.Size() > 8)) {
             std::this_thread::sleep_for(milliseconds(5));
@@ -558,17 +746,24 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
                     LOG_INFO(Lib_AvPlayer, "EOF reached in demuxer. Looping the source...");
                     m_state.OnWarning(ORBIS_AVPLAYER_ERROR_WAR_LOOPING_BACK);
                     avio_seek(m_avformat_context->pb, 0, SEEK_SET);
+                    // Reset timestamp rebase on loop seek
+                    m_video_ts_rebase.reset();
+                    m_audio_ts_rebase.reset();
                     if (m_video_stream_index.has_value()) {
                         const auto index = m_streams[m_video_stream_index.value()].ffmpeg_index;
                         const auto stream = m_avformat_context->streams[index];
-                        avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration,
-                                           0);
+                        // BUG FIX 2 (P0): Check seek return for loop recovery
+                        if (avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration, 0) < 0) {
+                            LOG_WARNING(Lib_AvPlayer, "Could not seek video stream for loop recovery");
+                        }
                     }
                     if (m_audio_stream_index.has_value()) {
                         const auto index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
                         const auto stream = m_avformat_context->streams[index];
-                        avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration,
-                                           0);
+                        // BUG FIX 2 (P0): Check seek return for loop recovery
+                        if (avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration, 0) < 0) {
+                            LOG_WARNING(Lib_AvPlayer, "Could not seek audio stream for loop recovery");
+                        }
                     }
                     continue;
                 } else {
@@ -577,6 +772,8 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
                 }
             } else {
                 LOG_ERROR(Lib_AvPlayer, "Could not read AV frame: error = {}", res);
+                // BUG FIX 2 (P0): Set EOF before error callback to unblock game
+                m_is_eof = true;
                 m_state.OnError();
                 return;
             }
@@ -663,6 +860,14 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
     const auto stream = m_avformat_context->streams[stream_index];
     const auto timestamp = FrameTimestampMillis(frame, stream->time_base);
 
+    // Timestamp rebase: align PTS to wall clock after seek
+    u64 rebased_timestamp = timestamp;
+    if (!m_video_ts_rebase.has_value()) {
+        m_video_ts_rebase = timestamp;
+        LOG_DEBUG(Lib_AvPlayer, "Video TS rebase baseline set: {} ms", timestamp);
+    }
+    rebased_timestamp = timestamp - m_video_ts_rebase.value();
+
     const auto width = Common::AlignUp<u32>(frame.width, 16);
     const auto pitch = Common::AlignUp<u32>(frame.width, 64);
     const auto height = Common::AlignUp<u32>(frame.height, 16);
@@ -674,7 +879,7 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
         .info =
             {
                 .p_data = p_buffer,
-                .timestamp = timestamp,
+                .timestamp = rebased_timestamp,
                 .details =
                     {
                         .video =
@@ -699,37 +904,92 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
 void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvVideoDecoder");
+    
+    InitTracing();
 
     LOG_INFO(Lib_AvPlayer, "Video Decoder Thread started");
+    u64 frames_decoded = 0;
+    auto last_status_time = steady_clock::now();
+    
     while ((!m_is_eof || m_video_packets.Size() != 0) && !stop.stop_requested()) {
         if (m_video_packets.Size() == 0 &&
             !m_video_packets_cv.WaitFor(stop, std::chrono::milliseconds(200), [this] { return m_video_packets.Size() != 0; })) {
+            // v2.1.2: Periodic status dump
+            auto now = steady_clock::now();
+            if (duration_cast<seconds>(now - last_status_time).count() >= 5) {
+                if (g_avplayer_trace_enabled) {
+                    std::ostringstream oss;
+                    oss << "VideoDecoderThread: STALL - packets=" << m_video_packets.Size()
+                        << " frames=" << m_video_frames.Size()
+                        << " buffers=" << m_video_buffers.Size()
+                        << " decoded=" << frames_decoded;
+                    LogTraceEvent(oss.str());
+                }
+                last_status_time = now;
+            }
             continue;
         }
+        
         const auto packet = m_video_packets.Pop();
         if (!packet.has_value()) {
             continue;
         }
+        
+        // v2.1.2: Log packet info
+        if (g_avplayer_trace_enabled) {
+            std::ostringstream oss;
+            oss << "VideoDecoderThread: packet pts=" << packet->get()->pts
+                << " dts=" << packet->get()->dts
+                << " size=" << packet->get()->size;
+            LogTraceEvent(oss.str());
+        }
 
         auto res = avcodec_send_packet(m_video_codec_context.get(), packet->get());
         if (res < 0 && res != AVERROR(EAGAIN)) {
+            if (g_avplayer_trace_enabled) {
+                LogTraceEvent(std::string("VideoDecoderThread: send_packet ERROR ") + av_err2str(res));
+            }
             m_state.OnError();
             LOG_ERROR(Lib_AvPlayer, "Could not send packet to the video codec. Error = {}",
                       av_err2str(res));
             return;
         }
+        
+        // v2.1.2: Log EAGAIN
+        if (res == AVERROR(EAGAIN)) {
+            if (g_avplayer_trace_enabled) {
+                LogTraceEvent("VideoDecoderThread: send_packet EAGAIN (decoder busy)");
+            }
+        }
+        
         while (res >= 0) {
             if (m_video_buffers.Size() == 0 &&
                 !m_video_buffers_cv.WaitFor(stop, std::chrono::milliseconds(200), [this] { return m_video_buffers.Size() != 0; })) {
+                // v2.1.2: Buffer exhaustion diagnostic
+                if (g_avplayer_trace_enabled) {
+                    std::ostringstream oss;
+                    oss << "VideoDecoderThread: BUFFER STALL - no buffers after 200ms"
+                        << " frames=" << m_video_frames.Size()
+                        << " buffers=" << m_video_buffers.Size();
+                    LogTraceEvent(oss.str());
+                    fprintf(stderr, "[AV_VIDEO] %s\n", oss.str().c_str());
+                }
                 break;
             }
+            
             auto up_frame = AVFramePtr(av_frame_alloc(), &ReleaseAVFrame);
             res = avcodec_receive_frame(m_video_codec_context.get(), up_frame.get());
             if (res < 0) {
                 if (res == AVERROR_EOF) {
+                    if (g_avplayer_trace_enabled) {
+                        LogTraceEvent("VideoDecoderThread: receive_frame EOF");
+                    }
                     LOG_INFO(Lib_AvPlayer, "EOF reached in video decoder");
                     return;
                 } else if (res != AVERROR(EAGAIN)) {
+                    if (g_avplayer_trace_enabled) {
+                        LogTraceEvent(std::string("VideoDecoderThread: receive_frame ERROR ") + av_err2str(res));
+                    }
                     LOG_ERROR(Lib_AvPlayer,
                               "Could not receive frame from the video codec. Error = {}",
                               av_err2str(res));
@@ -737,11 +997,26 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
                     return;
                 }
             } else {
+                frames_decoded++;
+                
                 auto buffer = m_video_buffers.Pop();
                 if (!buffer.has_value()) {
                     // Video buffers queue was cleared. This means that player was stopped.
+                    if (g_avplayer_trace_enabled) {
+                        LogTraceEvent("VideoDecoderThread: buffers cleared (player stopped)");
+                    }
                     break;
                 }
+                
+                // v2.1.2: Log frame decode success
+                if (g_avplayer_trace_enabled) {
+                    std::ostringstream oss;
+                    oss << "VideoDecoderThread: decoded frame pts=" << up_frame->pts
+                        << " format=" << up_frame->format
+                        << " total_decoded=" << frames_decoded;
+                    LogTraceEvent(oss.str());
+                }
+                
                 if (up_frame->format != AV_PIX_FMT_NV12) {
                     const auto nv12_frame = ConvertVideoFrame(*up_frame);
                     if (nv12_frame == nullptr) {
@@ -753,11 +1028,24 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
                     m_video_frames.Push(PrepareVideoFrame(std::move(buffer.value()), *up_frame));
                 }
                 m_video_frames_cv.Notify();
+                
+                // v2.1.2: Log frame queue size after push
+                if (g_avplayer_trace_enabled) {
+                    std::ostringstream oss;
+                    oss << "VideoDecoderThread: pushed frame - queue=" << m_video_frames.Size();
+                    LogTraceEvent(oss.str());
+                }
             }
         }
     }
 
     LOG_INFO(Lib_AvPlayer, "Video Decoder Thread exited normally");
+    
+    if (g_avplayer_trace_enabled) {
+        std::ostringstream oss;
+        oss << "VideoDecoderThread: EXIT - total_decoded=" << frames_decoded;
+        LogTraceEvent(oss.str());
+    }
 }
 
 AvPlayerSource::AVFramePtr AvPlayerSource::ConvertAudioFrame(const AVFrame& frame) {
@@ -805,12 +1093,20 @@ Frame AvPlayerSource::PrepareAudioFrame(GuestBuffer buffer, const AVFrame& frame
     const auto stream = m_avformat_context->streams[stream_index];
     const auto timestamp = FrameTimestampMillis(frame, stream->time_base);
 
+    // Timestamp rebase: align PTS to wall clock after seek
+    u64 rebased_timestamp = timestamp;
+    if (!m_audio_ts_rebase.has_value()) {
+        m_audio_ts_rebase = timestamp;
+        LOG_DEBUG(Lib_AvPlayer, "Audio TS rebase baseline set: {} ms", timestamp);
+    }
+    rebased_timestamp = timestamp - m_audio_ts_rebase.value();
+
     return Frame{
         .buffer = std::move(buffer),
         .info =
             {
                 .p_data = p_buffer,
-                .timestamp = timestamp,
+                .timestamp = rebased_timestamp,
                 .details =
                     {
                         .audio =
@@ -872,6 +1168,12 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
                 }
                 if (up_frame->format != AV_SAMPLE_FMT_S16) {
                     const auto pcm16_frame = ConvertAudioFrame(*up_frame);
+                    // BUG FIX 4 (P1): Null check for audio frame conversion
+                    if (pcm16_frame == nullptr) {
+                        LOG_ERROR(Lib_AvPlayer, "Could not convert audio frame to S16 format");
+                        m_state.OnError();
+                        return;
+                    }
                     m_audio_frames.Push(PrepareAudioFrame(std::move(buffer.value()), *pcm16_frame));
                 } else {
                     m_audio_frames.Push(PrepareAudioFrame(std::move(buffer.value()), *up_frame));
@@ -886,7 +1188,85 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
 
 bool AvPlayerSource::HasRunningThreads() const {
     return m_demuxer_thread.Joinable() || m_video_decoder_thread.Joinable() ||
-           m_audio_decoder_thread.Joinable();
+           m_audio_decoder_thread.Joinable() || m_watchdog_thread.Joinable();
+}
+
+void AvPlayerSource::WatchdogThread(std::stop_token stop) {
+    using namespace std::chrono;
+    Common::SetCurrentThreadName("shadPS4:AvWatchdog");
+
+    LOG_INFO(Lib_AvPlayer, "Watchdog Thread started (auto-skip cutscene freeze)");
+    u64 last_delivered = 0;
+    auto last_check = steady_clock::now();
+    
+    while (!stop.stop_requested()) {
+        std::this_thread::sleep_for(milliseconds(500));
+        
+        if (m_is_eof) {
+            continue;
+        }
+        
+        const u64 delivered_now = m_video_frames_delivered.load(std::memory_order_relaxed);
+        const auto now = steady_clock::now();
+        const auto elapsed = duration_cast<milliseconds>(now - last_check).count();
+        
+        // NEW: If paused, check pause duration separately
+        if (m_is_paused.load()) {
+            auto pause_start = m_pause_time;
+            if (pause_start != high_resolution_clock::time_point{}) {
+                const auto now_hr = high_resolution_clock::now();
+                auto paused_ms = duration_cast<milliseconds>(now_hr - pause_start).count();
+                if (paused_ms > 5000) {
+                    LOG_WARNING(Lib_AvPlayer,
+                        "[AV_WATCHDOG] Stuck pause detected ({} ms paused, cur_t frozen, no video). Force-unpausing.",
+                        paused_ms);
+                    fprintf(stderr, "[AV_WATCHDOG] STUCK PAUSE: %lld ms, forcing unpause to trigger skip\n",
+                            (long long)paused_ms);
+                    // Force clear pause state — this lets GetVideoData proceed
+                    // (which will fail because no frames, but now watchdog below can see no video)
+                    m_is_paused.store(false);
+                    m_pause_duration += now_hr - pause_start;
+                    m_pause_time = {};
+                    last_check = steady_clock::now();
+                }
+            } else {
+                m_pause_time = high_resolution_clock::now();
+            }
+            continue;
+        }
+        
+        // Auto-skip cutscene freeze: no video frames delivered for > 3s
+        if (delivered_now == last_delivered && elapsed > 3000) {
+            fprintf(stderr, "[AV_WATCHDOG] DEADLOCK DETECTED: No video frames delivered for %lld ms. Auto-stopping cutscene.\n", (long long)elapsed);
+            LOG_ERROR(Lib_AvPlayer, "Watchdog detected deadlock: no frames for {} ms. Force-stopping playback.", elapsed);
+            
+            // v2.1.2: Dump diagnostic summary before stopping
+            if (g_avplayer_trace_enabled) {
+                DumpTraceRingToFile();
+            }
+            fprintf(stderr, "\n[AV_WATCHDOG] SUMMARY:\n");
+            fprintf(stderr, "  Video frames in queue: %zu\n", (size_t)m_video_frames.Size());
+            fprintf(stderr, "  Audio frames in queue: %zu\n", (size_t)m_audio_frames.Size());
+            fprintf(stderr, "  Video buffers available: %zu\n", (size_t)m_video_buffers.Size());
+            fprintf(stderr, "  Audio buffers available: %zu\n", (size_t)m_audio_buffers.Size());
+            fprintf(stderr, "  Frames delivered: %llu\n", (unsigned long long)delivered_now);
+            fprintf(stderr, "  Sync mode: 0x%x\n", (unsigned)m_state.GetSyncMode());
+            fprintf(stderr, "  Set BASARA_AVPLAYER_TRACE=1 for detailed event log\n");
+            fprintf(stderr, "\n");
+            
+            // Force stop to unblock game
+            std::unique_lock lock(m_state_mutex);
+            m_state.OnError();
+            break;
+        }
+        
+        if (delivered_now != last_delivered) {
+            last_delivered = delivered_now;
+            last_check = now;
+        }
+    }
+    
+    LOG_INFO(Lib_AvPlayer, "Watchdog Thread exited");
 }
 
 } // namespace Libraries::AvPlayer

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// SacredFire: temporal upscaling for CTR Nitro-Fueled (docs/sacredfire/14-fsr3.md):
+// Engine: temporal upscaling for the game the port (docs/engine/14-fsr3.md):
 // FSR 3.1, NVIDIA DLSS or AMD FSR 4 (v07 INT8) at the finished frame.
 //
-// bbport's TemporalUpscaler is built around Bloodborne's frame. CTR's is simpler to feed: its
+// the engine's TemporalUpscaler is built around the engine's frame. the game's is simpler to feed: its
 // G-buffer pass (four RGBA8 targets and the scene depth, 2x MSAA) also writes a velocity target
 // for the game's motion blur. This upscaler takes the finished frame where the display pass
 // stretches it (the FSR 1 spot, before the HUD), the scene depth and that velocity, and gives

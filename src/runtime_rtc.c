@@ -145,7 +145,7 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     return 0;
 }
 
-/* SacredFire: sceRtcParseDateTime (dates from web services, online): RFC 3339
+/* Engine: sceRtcParseDateTime (dates from web services, online): RFC 3339
  * ("2026-10-13T18:20:00.5Z", "...+05:00") or RFC 2822 ("Tue, 13 Oct 2026 18:20:00 GMT" / "+0500"),
  * to a UTC tick. */
 #define ERR_BAD_PARSE ((int32_t)0x80B50007)

@@ -34,7 +34,7 @@ public:
     /// Presents the current image and move to the next one
     bool Present();
 
-    /// SacredFire: frame generation paces its two presents itself unless FIFO does.
+    /// Engine: frame generation paces its two presents itself unless FIFO does.
     vk::PresentModeKHR GetPresentMode() const {
         return present_mode;
     }
@@ -59,7 +59,7 @@ public:
         return swapchain;
     }
 
-    /// bbport: false while the window is minimised (0x0 surface): frames are not presented.
+    /// engine: false while the window is minimised (0x0 surface): frames are not presented.
     bool IsPresentable() const {
         return !zero_extent && swapchain;
     }

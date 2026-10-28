@@ -40,7 +40,7 @@ extern "C" int runtime_memory_direct_phys(uintptr_t address, uint64_t* phys, uin
 namespace VideoCore {
 
 namespace {
-// bbport: the tick of the newest GPU write per 64 KiB of guest memory, per 1 MiB for writes over
+// engine: the tick of the newest GPU write per 64 KiB of guest memory, per 1 MiB for writes over
 // 16 MiB (ObtainBuffer with is_written: the only place ranges become GPU-modified). A readback
 // waits for that submission only and copies on the readback queue, not behind the queued
 // frames; a coarser grain let a buffer the GPU writes every frame hold up its neighbours.
@@ -107,7 +107,7 @@ GpuWriteTicks& WriteTicks() {
     return write_ticks;
 }
 
-// bbport (BB_READBACK_LOG): the newest GPU-written bindings, to show which writes a readback that
+// engine (BB_READBACK_LOG): the newest GPU-written bindings, to show which writes a readback that
 // waited for the GPU overlapped (a binding wider than what the shader writes would show here).
 struct WrittenBinding {
     u64 address, size, tick;
@@ -115,7 +115,7 @@ struct WrittenBinding {
 std::array<WrittenBinding, 4096> written_bindings;
 std::atomic<u64> written_head{0};
 
-// bbport: BB_READBACK_LOG=path — every download of GPU-written buffer memory back to guest
+// engine: BB_READBACK_LOG=path — every download of GPU-written buffer memory back to guest
 // memory (a CPU write to a range the GPU wrote): who asked, where, how much, how long it took,
 // how old the GPU's newest write there was, and whether the readback queue served it.
 struct ReadbackLog {
@@ -144,7 +144,7 @@ ReadbackLog* Readbacks() {
 thread_local const char* readback_requester = "";
 thread_local bool readback_is_write = false;
 
-/// bbport: copies finished GPU data out of an arena on the readback queue (Instance), waiting
+/// engine: copies finished GPU data out of an arena on the readback queue (Instance), waiting
 /// only for those writes (the timeline semaphore at their tick), not for the queued frames.
 class FastReadback {
 public:
@@ -263,7 +263,7 @@ private:
 };
 std::mutex fast_readback_mutex;
 
-// bbport: BB_GPU_WRITE_TWINS=1 — a guest write into a page that holds bytes the GPU is still
+// engine: BB_GPU_WRITE_TWINS=1 — a guest write into a page that holds bytes the GPU is still
 // writing (counters, small compute outputs rewritten every frame) does not wait for the GPU: the
 // guest's copy of those bytes is kept as a "twin" and the page becomes CPU-modified at once.
 // Uploads leave the GPU's bytes in the arena while the guest bytes still match their twin (the
@@ -349,7 +349,7 @@ void EraseTwins(VAddr begin, VAddr end) {
     }
 }
 
-/// bbport: BB_PREUPLOAD — background upload of the game's GPU memory into the arena ahead of use.
+/// engine: BB_PREUPLOAD — background upload of the game's GPU memory into the arena ahead of use.
 /// 1 (run.sh default): only memory already resident in the arena that the game rewrote, and
 /// textures from the arena only where it is resident: no new VRAM. 2: all of the game's GPU
 /// memory, textures always from the arena (~3 GB more VRAM, the shared memory on a Steam Deck).
@@ -371,8 +371,8 @@ bool PreuploadEnabled() {
 
 /// On an integrated GPU (Steam Deck) VRAM is the same memory: everything stays in place there.
 bool integrated_gpu = false;
-/// bbport BB_GUEST_IN_PLACE: Garlic memory (type 3) is cached in VRAM, Onion in place.
-/// bbport BB_GUEST_IN_PLACE optimizations, for A/B: VRAM copies uploaded by GPU copies from the
+/// engine BB_GUEST_IN_PLACE: Garlic memory (type 3) is cached in VRAM, Onion in place.
+/// engine BB_GUEST_IN_PLACE optimizations, for A/B: VRAM copies uploaded by GPU copies from the
 /// guest chunks (BB_CHUNK_UPLOADS=0: CPU staging), texture data bound in place whatever its type
 /// (BB_INPLACE_TEXTURES=1; off: by type).
 bool ChunkUploads() {
@@ -479,7 +479,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = instance.IsIntegrated();
-    // bbport: the PC memory model needs the game's direct memory in dma-buf chunks the runtime can
+    // engine: the PC memory model needs the game's direct memory in dma-buf chunks the runtime can
     // map at any offset (BbGuestMemory::Usable), and an AMD GPU for now (PcModelGpu). Without
     // them it is off, as BB_GUEST_IN_PLACE=0.
     if (GuestInPlace() &&
@@ -498,7 +498,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     const bool shared = bool(instance.GetReadbackQueue()); // as Buffer creates the arenas
 #ifdef _WIN32
     // Windows drivers (AMD: 2 GiB) can limit buffers below two 4 GiB arena pages. Linux keeps
-    // SacredFire's tested 4 GiB pages.
+    // Engine's tested 4 GiB pages.
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            (u64{2} << arena_page_bits) > instance.GetMaxBufferSize()) {
         --arena_page_bits;
@@ -554,7 +554,7 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
     });
 }
 
-// bbport: the game fills its per-frame buffers (constants, skinning output) sequentially and
+// engine: the game fills its per-frame buffers (constants, skinning output) sequentially and
 // every 4 KiB page cost a protection fault (~110k/s in Hunter's Nightmare, a fifth of each
 // render worker's time in the kernel). A fault unprotects the aligned window around it instead;
 // pages marked CPU-modified without being written only cost an upload when bound.
@@ -573,7 +573,7 @@ void BufferCache::RunGuestCopy(const BbCopy::Item& item) {
 // Each source is noted once the copy is queued (a WaitHostCopies started after the note covers it).
 void BufferCache::SmallGuestCopy(const BbCopy::Item& item) {
     if (!scheduler.IsRecordingDeferred()) {
-        // bbport: commands recorded on this thread (direct mode: the draw or dispatch after the
+        // engine: commands recorded on this thread (direct mode: the draw or dispatch after the
         // upscaler's passes; or BB_VK_RECORD_THREAD=0): the copy runs now, before the commands
         // that read it. In this thread's copy batch it ran at the next submission at the
         // earliest, possibly after a WRITE_DATA had changed its source (that wait runs only the
@@ -630,7 +630,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             std::max<VAddr>(Common::AlignDown(device_addr, WindowSize), arena->cpu_addr);
         const VAddr window_end = std::min<VAddr>(
             std::max<VAddr>(window_start + WindowSize, device_addr + size), arena_end);
-        // bbport (BB_GPU_WRITE_TWINS): bytes the GPU is still writing on the faulting page are
+        // engine (BB_GPU_WRITE_TWINS): bytes the GPU is still writing on the faulting page are
         // twinned instead of waited for (see TwinsEnabled).
         if (is_write && TwinsEnabled()) {
             const VAddr page_begin = Common::AlignDown(device_addr, TRACKER_BYTES_PER_PAGE);
@@ -663,7 +663,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 return;
             }
         }
-        // bbport (BB_GPU_WRITE_TWINS): the window around the fault is downloaded only when the GPU has
+        // engine (BB_GPU_WRITE_TWINS): the window around the fault is downloaded only when the GPU has
         // done its writes there; else just the faulting page (the other pages stay GPU-modified
         // and protected), instead of waiting for GPU writes that have nothing to do with it.
         VAddr download_start = window_start, download_end = window_end;
@@ -734,7 +734,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
                 write_range(guest, src, copy.size);
                 continue;
             }
-            // bbport (BB_GPU_WRITE_TWINS): guest bytes written since their twin was made stay;
+            // engine (BB_GPU_WRITE_TWINS): guest bytes written since their twin was made stay;
             // the page is CPU-modified, so its next upload carries them to the arena.
             ForEachTwinRun(guest, guest + copy.size, [&](VAddr from, VAddr to, TwinRun run) {
                 if (run != TwinRun::Changed) {
@@ -746,7 +746,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     };
     const auto wait_start = std::chrono::steady_clock::now();
     const u64 tick_before = scheduler.CurrentTick();
-    // bbport: the readback queue copies the data once the GPU has done the newest write into
+    // engine: the readback queue copies the data once the GPU has done the newest write into
     // it (waiting for that submission only when it is still queued); the graphics queue would
     // first run all queued work (~a frame: 20-30 ms stutters whenever the game wrote into
     // memory a GPU pass had written).
@@ -828,7 +828,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
 }
 
 namespace {
-// bbport: BB_BUFFER_STATS=1 — how buffer bindings reach the GPU, by guest region (256 MiB),
+// engine: BB_BUFFER_STATS=1 — how buffer bindings reach the GPU, by guest region (256 MiB),
 // printed every 5 s: small read-only copies into the stream buffer, arena bindings, and the
 // bytes those re-upload after CPU writes. Input for engine-level short paths.
 struct BufferStats {
@@ -917,7 +917,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         PrintBufferStats();
         NoteHotUse(device_addr, size);
     }
-    // bbport BB_GUEST_IN_PLACE: buffers in the game's direct memory are used where they are. Small
+    // engine BB_GUEST_IN_PLACE: buffers in the game's direct memory are used where they are. Small
     // read-only ones (constants) are still copied when bound (the stream path below): commands
     // decoded later (WriteData, constant RAM dumps) change them on the CPU in decode order, and
     // a draw decoded before must keep its values (buffer renaming). GPU writes are noted for
@@ -975,7 +975,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             ++region.stream_count;
             region.stream_bytes += size;
         }
-        // bbport: the guest data is copied on a copy thread, started now; submission and
+        // engine: the guest data is copied on a copy thread, started now; submission and
         // guest-visible fences wait for it (Scheduler::WaitHostCopies).
         if (!stream_buffer.mapped_data.empty() &&
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
@@ -1057,7 +1057,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_addr, u32 size) {
-    // bbport BB_GUEST_IN_PLACE: texture data is read by the GPU from the game's memory itself:
+    // engine BB_GUEST_IN_PLACE: texture data is read by the GPU from the game's memory itself:
     // through the arena where it is bound in place, else (BB_CHUNK_TEXTURES) from its guest
     // memory chunk.
     if (GuestInPlace()) {
@@ -1082,7 +1082,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
         TraceBinding(device_addr, size, false, 7);
         return ObtainBuffer(device_addr, size, false);
     }
-    // bbport: BB_PREUPLOAD — texture data comes from the arena (device-local): only the pages
+    // engine: BB_PREUPLOAD — texture data comes from the arena (device-local): only the pages
     // the CPU changed since are uploaded into it, and the background pre-upload keeps it
     // current, so a streaming burst detiles from VRAM instead of copying everything through
     // the CPU and the PCIe bus in that frame.
@@ -1107,7 +1107,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
     const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostUncached,
                                               instance.StorageMinAlignment());
     if (!BbToggle::Disabled(BbToggle::DeferredUploads)) {
-        // bbport: texture data is copied on the copy threads (streaming: 100+ MB per frame);
+        // engine: texture data is copied on the copy threads (streaming: 100+ MB per frame);
         // the upload reads the staging only after submission, which waits for the copies.
         constexpr u64 Chunk = 1_MB;
         for (u64 offset = 0; offset < staging.size; offset += Chunk) {
@@ -1141,7 +1141,7 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
     if (memory_tracker->IsRegionGpuModified(addr, size)) {
         return true;
     }
-    // bbport BB_GUEST_IN_PLACE: GPU writes are not tracked per page; one not done yet counts.
+    // engine BB_GUEST_IN_PLACE: GPU writes are not tracked per page; one not done yet counts.
     if (GuestInPlace()) {
         const u64 tick = WriteTicks().Newest(addr, size);
         if (tick == 0 || scheduler.GetWorkSemaphore()->IsFree(tick)) {
@@ -1237,7 +1237,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     if (maintained_epoch != packet_epoch) {
         Maintain();
     }
-    // bbport: the blocks were all resident the last time and nothing changed since: no interval
+    // engine: the blocks were all resident the last time and nothing changed since: no interval
     // lookup (it ran for every buffer binding).
     thread_local std::array<ResidencyMemo, 256> resident_memo{};
     auto& memo = resident_memo[first_block & (resident_memo.size() - 1)];
@@ -1254,7 +1254,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     }
     BbStats::Timer timer{BbStats::t_resident};
 
-    // bbport BB_GUEST_IN_PLACE: blocks of the game's direct memory are bound to the memory it
+    // engine BB_GUEST_IN_PLACE: blocks of the game's direct memory are bound to the memory it
     // lives in; the rest (and everything without it) gets VRAM as before.
     std::vector<ResidentBind> binds;
     if (GuestInPlace()) {
@@ -1270,7 +1270,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     }
 
     if (vram_blocks != 0) {
-        // bbport: the slots of blocks that left VRAM first, block by block. A request of several
+        // engine: the slots of blocks that left VRAM first, block by block. A request of several
         // blocks only ever took new space, and the free slots piled up while new 64 MiB chunks
         // were allocated.
         IntervalList rest_ranges;
@@ -1338,7 +1338,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
 std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes) {
     if (bytes == block_size && free_slot_count != 0) {
-        // bbport: a slot of the fullest chunk: the emptier ones drain and go back to the driver.
+        // engine: a slot of the fullest chunk: the emptier ones drain and go back to the driver.
         auto best = residency_chunks.end();
         for (auto it = residency_chunks.begin(); it != residency_chunks.end(); ++it) {
             if (!it->second.free_offsets.empty() &&
@@ -1355,7 +1355,7 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes) {
             return {vk::DeviceMemory{best->first}, offset};
         }
     }
-    // bbport: residency comes out of 64 MiB blocks (a larger request gets its own): a streaming
+    // engine: residency comes out of 64 MiB blocks (a larger request gets its own): a streaming
     // burst bound hundreds of small ranges, each its own vkAllocateMemory (~8 ms a burst). At most
     // one block is partly unused. The next block is allocated in the background once half of the
     // current one is used: the kernel clears new memory, on a Steam Deck with the CPU (16-22 ms a
@@ -1402,7 +1402,7 @@ u32 BufferCache::VramIdleSeconds() {
             return u32(std::strtoul(env, nullptr, 10));
         }
 #ifdef _WIN32
-        // bbport: idle demotion is OFF by default on Windows. EvictVramBlock unbinds sparse
+        // engine: idle demotion is OFF by default on Windows. EvictVramBlock unbinds sparse
         // memory that descriptors created earlier in the same frame can still name; during
         // combat that raced with recording and crashed. Opt back in with BB_VRAM_IDLE_SECONDS.
         return 0u;
@@ -1712,7 +1712,7 @@ void BufferCache::ProcessDemotions() {
             (phys & (block_size - 1)) != 0 || mapping_end - address < block_size ||
             (chunk = BbGuestMemory::Find(phys)) == nullptr) {
             if (idle) {
-                // bbport: with idle demotion disabled (VramIdleSeconds()==0) never force the
+                // engine: with idle demotion disabled (VramIdleSeconds()==0) never force the
                 // eviction here either; a VkBuffer can still be named by the descriptor cache.
                 if (VramIdleSeconds() != 0) {
                     EvictVramBlock(block);
@@ -2302,7 +2302,7 @@ void BufferCache::ProcessPendingUnmaps() {
             gpu_written_bytes.Subtract(range.start << block_shift, range.end << block_shift);
             promote_candidates.Subtract(range.start, range.end);
         }
-        // bbport: blocks wholly unmapped that have a VRAM copy leave VRAM too (their slots go
+        // engine: blocks wholly unmapped that have a VRAM copy leave VRAM too (their slots go
         // to the next blocks moved there; uploaded again if mapped and used).
         for (u64 block = (addr + block_size - 1) >> block_shift; block < (addr + size) >> block_shift;
              ++block) {
@@ -2316,7 +2316,7 @@ bool BufferCache::IsInPlace(VAddr addr, u64 size) const {
         return false;
     }
     const u64 first = addr >> block_shift, last = (addr + size - 1) >> block_shift;
-    // bbport: asked for every binding; the answer holds while the residency is unchanged.
+    // engine: asked for every binding; the answer holds while the residency is unchanged.
     thread_local std::array<ResidencyMemo, 256> in_place_memo{};
     auto& memo = in_place_memo[first & (in_place_memo.size() - 1)];
     const u64 generation = ResidencyGeneration();
@@ -2329,7 +2329,7 @@ bool BufferCache::IsInPlace(VAddr addr, u64 size) const {
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
     boost::container::small_vector<std::pair<vk::Buffer, vk::BufferCopy>, 4> chunk_copies;
-    // bbport BB_GUEST_IN_PLACE: the arena is the game's memory there: nothing to upload, no
+    // engine BB_GUEST_IN_PLACE: the arena is the game's memory there: nothing to upload, no
     // write tracking, and GPU writes need no readback. Images aliasing it still sync.
     if (IsInPlace(device_addr, size)) {
         return is_texel_buffer && !is_written && SynchronizeMemoryFromImage(arena, device_addr, size);
@@ -2351,7 +2351,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             });
         return image;
     }
-    // bbport per-submission sync stamp: a frame binds the same vertex/constant buffers to
+    // engine per-submission sync stamp: a frame binds the same vertex/constant buffers to
     // thousands of draws. Once a read-only range has been synchronized in this submission and
     // no CPU write happened since (WriteEpoch), repeating the interval-tree/page-table walk is
     // pointless. Keyed by (arena, address, size, tick, epoch); a new submission or any CPU
@@ -2389,7 +2389,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             total_size_bytes += size;
         },
         [&] {
-            // bbport (BB_GPU_WRITE_TWINS): bytes whose guest copy still matches its twin keep the
+            // engine (BB_GPU_WRITE_TWINS): bytes whose guest copy still matches its twin keep the
             // GPU's data in the arena; twin bytes the guest wrote since are uploaded and no
             // longer GPU-modified.
             if (TwinsEnabled() && !copies.empty()) {
@@ -2422,7 +2422,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                     total_size_bytes = offset;
                 }
             }
-            // bbport BB_GUEST_IN_PLACE: what lies in a guest memory chunk is copied by the GPU
+            // engine BB_GUEST_IN_PLACE: what lies in a guest memory chunk is copied by the GPU
             // straight from it (no CPU copy into staging); the rest goes through staging.
             if (GuestInPlace() && ChunkUploads() && !copies.empty()) {
                 boost::container::small_vector<vk::BufferCopy, 4> staged;
@@ -2475,7 +2475,7 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     }
     BbStats::buffer_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);
     const auto staging = staging_pool.Request(total_size_bytes, MemoryType::HostUncached);
-    // bbport: the guest memory is copied into staging on the copy threads, started now in
+    // engine: the guest memory is copied into staging on the copy threads, started now in
     // groups of about 1 MiB; submission and guest-visible fences wait for them
     // (Scheduler::WaitHostCopies).
     if (!BbToggle::Disabled(BbToggle::DeferredUploads) && total_size_bytes < 1_MB) {
@@ -2559,7 +2559,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
             LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}", magic_enum::enum_name(*type));
         }
     }
-    // bbport: most texel buffers alias no image; remember misses until images change.
+    // engine: most texel buffers alias no image; remember misses until images change.
     const u64 generation = texture_cache.RegistryGeneration();
     auto& miss = image_miss_cache[((device_addr >> 6) ^ size * 0x9E3779B1u) % image_miss_cache.size()];
     if (miss.address == device_addr && miss.size == size && miss.generation == generation &&
@@ -2571,7 +2571,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         miss = {device_addr, size, generation};
         return false;
     }
-    // bbport: the lookups above only read what the texture binding helper leaves alone; the
+    // engine: the lookups above only read what the texture binding helper leaves alone; the
     // copy below changes image state, so the helper finishes first.
     runtime.BeforeImageAccess();
     Image& image = texture_cache.GetImage(image_id);
@@ -2772,7 +2772,7 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
         return;
     }
 
-    // bbport BB_GUEST_IN_PLACE: blocks moved in place wait for the submission that may still
+    // engine BB_GUEST_IN_PLACE: blocks moved in place wait for the submission that may still
     // upload into their VRAM copy (ProcessDemotions).
     const u64 wait_tick = bind_wait_tick;
     const auto wait_sema = scheduler.GetWorkSemaphore()->Handle();

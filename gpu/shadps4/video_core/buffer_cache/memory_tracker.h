@@ -36,7 +36,7 @@ public:
             });
     }
 
-    /// bbport (pre-upload): whether the 4 MiB region at `region_addr` holds CPU-modified pages
+    /// engine (pre-upload): whether the 4 MiB region at `region_addr` holds CPU-modified pages
     /// that are not GPU-modified, with no guest write seen since frame `quiet_since`.
     /// `rewritten`: only regions the guest wrote after the GPU had used them (write faults).
     bool PreuploadCandidate(VAddr region_addr, u32 quiet_since, bool rewritten) noexcept {
@@ -51,7 +51,7 @@ public:
         return manager->last_cpu_write_frame < quiet_since &&
                manager->preupload_backoff_until <= quiet_since && manager->HasCpuOnlyPages();
     }
-    /// bbport (pre-upload): notes that the region was pre-uploaded at `frame`.
+    /// engine (pre-upload): notes that the region was pre-uploaded at `frame`.
     /// Returns how many times it was pre-uploaded before.
     u32 NotePreuploaded(VAddr region_addr, u32 frame) noexcept {
         if (auto* manager = top_tier[region_addr >> TRACKER_HIGHER_PAGE_BITS]) {
@@ -70,7 +70,7 @@ public:
             });
     }
 
-    /// bbport: monotonically increasing stamp of CPU writes. A read-only binding synchronized in
+    /// engine: monotonically increasing stamp of CPU writes. A read-only binding synchronized in
     /// the current submission can skip the page walk while this value is unchanged.
     [[nodiscard]] u64 WriteEpoch() const noexcept {
         return write_epoch.load(std::memory_order_relaxed);
@@ -87,7 +87,7 @@ public:
                             });
     }
 
-    /// bbport: see RegionManager::ExtendWriteFault.
+    /// engine: see RegionManager::ExtendWriteFault.
     void ExtendWriteFault(VAddr window_addr, u64 size) {
         write_epoch.fetch_add(1, std::memory_order_relaxed);
         IteratePages<false>(window_addr, size,
@@ -137,7 +137,7 @@ public:
                             auto&& on_upload) {
         IteratePages<true>(query_cpu_range, query_size,
                            [&func, is_written](RegionManager* manager, u64 offset, size_t size) {
-                               // bbport: read-only bindings skip the region lock when no page
+                               // engine: read-only bindings skip the region lock when no page
                                // in range is CPU-modified. A guest write sets its bit in the
                                // fault handler before the store, and the draw that uses the
                                // data reaches this thread through the submission queue lock.

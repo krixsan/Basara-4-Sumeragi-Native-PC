@@ -2,7 +2,7 @@
 #include "bbport_free_check.h"
 
 #ifdef _WIN32
-// SacredFire (Windows): BB_FREE_CHECK is a Linux diagnostic (signals, mprotect traps,
+// Engine (Windows): BB_FREE_CHECK is a Linux diagnostic (signals, mprotect traps,
 // process_vm_readv); on Windows it is always off.
 namespace BbFreeCheck {
 bool Enabled() { return false; }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport BB_TIMELINE=<file>: a timeline of the frame's way to the GPU (guest submissions and
+// engine BB_TIMELINE=<file>: a timeline of the frame's way to the GPU (guest submissions and
 // waits, decoding, Vulkan submissions, GPU completion), to see where the GPU waits for work.
 // Recording starts BB_TIMELINE_START seconds (default 30) after the first event and stops when
 // the buffer is full (~15 s of play); the file is then written once: "ns event arg arg2" per line.

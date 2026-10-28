@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <csetjmp>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -43,7 +44,13 @@
 #include <vector>
 #include <vk_mem_alloc.h>
 #ifdef MemoryBarrier
-#undef MemoryBarrier // bbport: winnt.h macro (through fmt), clashes with vk::MemoryBarrier
+#undef MemoryBarrier // engine: winnt.h macro (through fmt), clashes with vk::MemoryBarrier
+#endif
+
+#if defined(VULKAN_HPP_NO_EXCEPTIONS)
+namespace vk {
+using SystemError = std::system_error;
+}
 #endif
 
 namespace Vulkan {
@@ -315,12 +322,27 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
 
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
+    try {
+        fxaa_pass.Create(device, instance.GetAllocator(), swapchain.GetSurfaceFormat().format);
+    } catch (const vk::SystemError& e) {
+        LOG_CRITICAL(Render_Vulkan, "FXAA CREATE EXCEPTION: {}", e.what());
+        fprintf(stderr, "\n[FXAA_CREATE_ERROR] %s\n", e.what());
+        BbSettings::Get().anti_aliasing = 0;
+    } catch (const std::exception& e) {
+        LOG_CRITICAL(Render_Vulkan, "FXAA CREATE STD EXCEPTION: {}", e.what());
+        fprintf(stderr, "\n[FXAA_CREATE_ERROR] %s\n", e.what());
+        BbSettings::Get().anti_aliasing = 0;
+    }
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
 
+    if (!BbSettings::Get().async_pipelines.load()) {
+        LOG_WARNING(Render_Vulkan, "[PERF] WARNING: async_pipelines is OFF. This WILL cause shader stutter.");
+        std::fprintf(stderr, "\n[PERF] WARNING: async_pipelines is OFF. This WILL cause shader stutter.\n");
+    }
 }
 
 Presenter::~Presenter() {
-    framegen.Reset(); // SacredFire: before the schedulers stop
+    framegen.Reset(); // Engine: before the schedulers stop
     if (fg_hudless_view) {
         draw_scheduler.Finish();
         instance.GetDevice().destroyImageView(fg_hudless_view);
@@ -490,7 +512,7 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
 Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
                                VAddr cpu_address) {
     BbTimeline::Note(BbTimeline::PipeTask, 4, draw_scheduler.CurrentTick());
-    // bbport: scaled upscaler presets: the output-size display buffer drawn by the port.
+    // engine: scaled upscaler presets: the output-size display buffer drawn by the port.
     TemporalUpscaler::Display display{};
     const bool upscaled = rasterizer->GetUpscaler().DisplayOverride(cpu_address, display);
     VideoCore::ImageId image_id{};
@@ -510,7 +532,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         .layerCount = VK_REMAINING_ARRAY_LAYERS,
     };
 
-    // bbport: recorded like draws, on the recording threads. CommandBuffer() would first wait
+    // engine: recorded like draws, on the recording threads. CommandBuffer() would first wait
     // for them to record everything handed over before (~90 us a frame of the draw recording
     // thread) and then submit from this thread.
     draw_scheduler.EndRendering();
@@ -569,7 +591,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             image_view = *fallback_view.image_view;
             image_size = vk::Extent2D{1, 1};
         }
-        // bbport: BB_PRESENT_DUMP_TRIGGER for the game's own display buffer too.
+        // engine: BB_PRESENT_DUMP_TRIGGER for the game's own display buffer too.
         if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {
             runtime.Transit(present_image, vk::ImageLayout::eGeneral,
                             vk::PipelineStageFlagBits2::eTransfer,
@@ -625,12 +647,31 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             Breadcrumbs::Mark(cmdbuf, stream, pp_crumb, false);
         }
         pp_pass.Render(cmdbuf, input, image_size, *frame, pp);
+
+        // v2.0: FXAA pass - same thread as pp_pass, no cross-thread race
+        if (BbSettings::Get().anti_aliasing == 1
+            && frame->image_view != vk::ImageView{}
+            && frame->width > 0
+            && frame->height > 0) {
+            try {
+                fxaa_pass.Render(cmdbuf, frame->image_view, vk::Extent2D{frame->width, frame->height}, *frame, fxaa_settings);
+            } catch (const vk::SystemError& e) {
+                LOG_CRITICAL(Render_Vulkan, "FXAA RENDER EXCEPTION: {}", e.what());
+                fprintf(stderr, "\n[FXAA_ERROR] %s\n", e.what());
+                BbSettings::Get().anti_aliasing = 0; // Disable FXAA to prevent crash
+            } catch (const std::exception& e) {
+                LOG_CRITICAL(Render_Vulkan, "FXAA STD EXCEPTION: {}", e.what());
+                fprintf(stderr, "\n[FXAA_ERROR] %s\n", e.what());
+                BbSettings::Get().anti_aliasing = 0;
+            }
+        }
+
         if (pp_crumb) {
             Breadcrumbs::Mark(cmdbuf, stream, pp_crumb, true);
         }
     });
 
-    // SacredFire: frame generation on the finished frame (HUD included), recorded right after
+    // Engine: frame generation on the finished frame (HUD included), recorded right after
     // the post-processing pass on the same command stream. No-op while the setting is off.
     vk::Image hudless{};
     if (framegen.Enabled() && !upscaled) {
@@ -639,14 +680,14 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     GenerateFrame(frame, hudless);
 
     // Flush frame creation commands.
-    BbStats::frame_number.fetch_add(1, std::memory_order_relaxed); // bbport: game frames shown
+    BbStats::frame_number.fetch_add(1, std::memory_order_relaxed); // engine: game frames shown
     frame->ready_semaphore = draw_scheduler.GetWorkSemaphore()->Handle();
     frame->ready_tick = draw_scheduler.CurrentTick();
     SubmitInfo info{};
     draw_scheduler.Flush(info);
     BbTimeline::Note(BbTimeline::PipeTask, 5, frame->ready_tick);
 
-    // bbport: the GPU command thread runs at most BB_FRAMES_AHEAD (default 1) guest frames
+    // engine: the GPU command thread runs at most BB_FRAMES_AHEAD (default 1) guest frames
     // ahead of the GPU: it waits here for the frame that many flips back. When the GPU is the
     // bottleneck it finishes frames at an even rate; without this bound the command thread ran
     // ahead and then blocked wherever a resource ran out, so flips (and the guest's frame
@@ -754,13 +795,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
-    // bbport: nothing to present to while the window is minimised (a 0x0 surface, issue #31).
+    // engine: nothing to present to while the window is minimised (a 0x0 surface, issue #31).
     if (window.GetWidth() == 0 || window.GetHeight() == 0) {
         free_frame();
         return;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
-    // SacredFire: Recreate waits for the device to go idle, which needs every queue to itself:
+    // Engine: Recreate waits for the device to go idle, which needs every queue to itself:
     // the recording threads submit concurrently (submit_mutex). Unlocked, switching to
     // fullscreen in game corrupted the heap on NVIDIA (0xc0000374).
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
@@ -773,7 +814,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     }
 
-    // SacredFire: frame generation. The generated frame lies halfway between the previous game
+    // Engine: frame generation. The generated frame lies halfway between the previous game
     // frame and this one: it goes out first, this frame half a game frame later. FIFO paces
     // the two presents by itself (one per refresh); Mailbox and Immediate need the wait.
     if (is_game_frame && !is_reusing_frame && framegen.Enabled()) {
@@ -839,7 +880,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     ASSERT_MSG(reset_result == vk::Result::eSuccess,
                "Unexpected error resetting present done fence: {}", vk::to_string(reset_result));
 
-    // bbport: the game frame is blitted (letterboxed) straight into the swapchain image.
+    // engine: the game frame is blitted (letterboxed) straight into the swapchain image.
     const vk::Image swapchain_image = swapchain.Image();
     auto& scheduler = present_scheduler;
     const auto cmdbuf = scheduler.CommandBuffer();
@@ -902,7 +943,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         if (VideoCore::ConsumeGameOnlyScreenshotRequests() != 0) {
             CaptureScreenshot(instance, scheduler, cmdbuf, *frame);
         }
-        // bbport: the settings menu / FPS counter over the frame, at display resolution.
+        // engine: the settings menu / FPS counter over the frame, at display resolution.
         const bool overlay = BbOverlay::Visible();
         const std::array post_barriers{
             vk::ImageMemoryBarrier{
@@ -955,7 +996,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
     // Flush vulkan commands.
 
-    // bbport: the frame's submission goes out from a recording thread (BB_ASYNC_SUBMIT); this
+    // engine: the frame's submission goes out from a recording thread (BB_ASYNC_SUBMIT); this
     // one, waiting for it on the same queue, must not get there first.
     if (frame->ready_semaphore == draw_scheduler.GetWorkSemaphore()->Handle()) {
         draw_scheduler.WaitSubmitted(frame->ready_tick);
@@ -1146,8 +1187,8 @@ void Presenter::GenerateFrame(Frame* frame, vk::Image hudless) {
     // A load, a pause or a hitch: interpolating across it would only smear two unrelated
     // frames, so the history starts over.
     in.reset = frame_ms >= 100.0f;
-    if (auto* ctr = rasterizer->CtrUpscaler()) {
-        const CtrFsr3::FrameVectors v = ctr->LastVectors();
+    if (auto* upscaler = rasterizer->CtrUpscaler()) {
+        const CtrFsr3::FrameVectors v = upscaler->LastVectors();
         auto& out = in.vectors;
         out.fresh = v.valid && v.sequence != fg_vector_sequence;
         fg_vector_sequence = v.sequence;

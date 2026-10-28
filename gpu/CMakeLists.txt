@@ -17,7 +17,7 @@ if (WIN32)
     add_compile_options(-ffile-prefix-map=${BB_SOURCE_ROOT}=.)
 endif()
 
-# bbport: link-time optimization (BB_LTO, default on) and profile-guided optimization
+# engine: link-time optimization (BB_LTO, default on) and profile-guided optimization
 # (BB_PGO: off, generate = instrumented build writing into BB_PGO_DIR, use = build with that
 # profile). Covers bbgpu and the static libraries linked into it. No -march: the same build
 # runs on the Steam Deck.
@@ -49,7 +49,7 @@ endif()
 find_package(Vulkan REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
-# bbport (Windows): MSYS2 has no magic_enum/miniz packages; the submodules are used instead.
+# engine (Windows): MSYS2 has no magic_enum/miniz packages; the submodules are used instead.
 find_package(magic_enum QUIET)
 if (NOT magic_enum_FOUND)
     add_library(magic_enum INTERFACE)
@@ -89,11 +89,11 @@ find_program(GLSLANG_COMPILER NAMES glslang glslangValidator REQUIRED)
 set(SIRIT_USE_SYSTEM_SPIRV_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 
-# bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
+# engine: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
-# SacredFire (Windows, MinGW): the FidelityFX 1.1.4 host sources expect MSVC's CRT on _WIN32;
+# Engine (Windows, MinGW): the FidelityFX 1.1.4 host sources expect MSVC's CRT on _WIN32;
 # GNU mode keeps MinGW's MSVC-compatible names (swprintf_s) visible and the header adds _countof.
 if (MINGW)
     foreach(ffx_target ffx_vulkan_fsr3_host_1_1_4 ffx_vulkan_fsr3_vk_backend_1_1_4)
@@ -224,9 +224,9 @@ else()
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
 endif()
 
-# bbport (Windows): bbgpu is a static library there, so the loader and the HLE runtime are
+# engine (Windows): bbgpu is a static library there, so the loader and the HLE runtime are
 # linked here, where CMake knows its dependencies (build.sh builds them with ninja).
-# SacredFire: the game executable is sacredfire.exe (out/sacredfire on Linux).
+# Engine: the game executable is basara_pc.exe.
 if (WIN32)
     enable_language(RC)
     file(GLOB BB_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
@@ -234,35 +234,35 @@ if (WIN32)
     add_library(atrac9 STATIC ${BB_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(sacredfire ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
+    add_executable(basara_pc ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
         ../src/isa_rewrite.c ../src/isa_emulate.c
         ../src/log.cpp ../src/crash_reporter.cpp
         ../packaging/windows/basara.rc)
-    set_target_properties(sacredfire PROPERTIES OUTPUT_NAME basara_pc C_STANDARD 11 C_EXTENSIONS OFF WIN32_EXECUTABLE FALSE)
+    set_target_properties(basara_pc PROPERTIES OUTPUT_NAME basara_pc C_STANDARD 11 C_EXTENSIONS OFF WIN32_EXECUTABLE FALSE)
     # isa_emulate runs inside guest code: no XMM/YMM.
     set_source_files_properties(../src/isa_emulate.c PROPERTIES COMPILE_OPTIONS "-mgeneral-regs-only")
     # Newer clang (MSYS2) warns about write-only counters kept for diagnostics.
-    target_compile_options(sacredfire PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror
+    target_compile_options(basara_pc PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror
         -Wno-unknown-warning-option -Wno-unused-but-set-global -fms-extensions>)
-    target_include_directories(sacredfire PRIVATE .. ../src)
-    target_link_libraries(sacredfire PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 dbghelp dxgi winhttp -pthread)
+    target_include_directories(basara_pc PRIVATE .. ../src)
+    target_link_libraries(basara_pc PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 dbghelp dxgi winhttp -pthread)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
-    target_link_options(sacredfire PRIVATE -Wl,--subsystem,console -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
+    target_link_options(basara_pc PRIVATE -Wl,--subsystem,console -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c)
     target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
-    # The launcher (CTR-NitroFueled-PC.exe, launcher/windows): Dear ImGui on Win32 + Direct3D 11,
+    # The legacy launcher (launcher/windows): Dear ImGui on Win32 + Direct3D 11,
     # linked statically, so the .exe next to run.py needs no DLL from bin\.
-    add_executable(ctr-launcher WIN32 ../launcher/windows/launcher.cpp ../launcher/windows/gamepads.cpp
+    add_executable(basara-legacy-launcher EXCLUDE_FROM_ALL ../launcher/windows/launcher.cpp ../launcher/windows/gamepads.cpp
         third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_win32.cpp
         third_party/imgui/backends/imgui_impl_dx11.cpp ../packaging/windows/launcher.rc)
     # gamepads.cpp: SDL3's headers only; bin\SDL3.dll is loaded at run time.
-    target_include_directories(ctr-launcher PRIVATE third_party/imgui third_party/imgui/backends ${SDL3_INCLUDE_DIRS})
-    target_compile_definitions(ctr-launcher PRIVATE UNICODE _UNICODE)
-    target_link_options(ctr-launcher PRIVATE -static -municode -s)
-    target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt)
-    set_target_properties(ctr-launcher PROPERTIES OUTPUT_NAME CTR-NitroFueled-PC INTERPROCEDURAL_OPTIMIZATION OFF)
+    target_include_directories(basara-legacy-launcher PRIVATE third_party/imgui third_party/imgui/backends ${SDL3_INCLUDE_DIRS})
+    target_compile_definitions(basara-legacy-launcher PRIVATE UNICODE _UNICODE)
+    target_link_options(basara-legacy-launcher PRIVATE -static -municode -s)
+    target_link_libraries(basara-legacy-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt)
+    set_target_properties(basara-legacy-launcher PROPERTIES OUTPUT_NAME basara-legacy-launcher INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
@@ -301,7 +301,7 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
-# bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
+# engine: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)

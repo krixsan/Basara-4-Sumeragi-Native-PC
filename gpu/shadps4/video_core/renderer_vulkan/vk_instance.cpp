@@ -23,7 +23,7 @@ namespace Vulkan {
 
 namespace {
 
-/// bbport BB_VRAM_LIMIT_MB=N (tests): the driver's VRAM budget taken as at most N MiB, at startup
+/// engine BB_VRAM_LIMIT_MB=N (tests): the driver's VRAM budget taken as at most N MiB, at startup
 /// and while the game runs, so the texture collector and VRAM copies behave as on a smaller card
 /// (a 6 GB GTX 1660 Ti reports ~5600). Allocations themselves are not limited.
 u64 VramLimit() {
@@ -297,7 +297,7 @@ bool Instance::CreateDevice() {
     // Optional
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
-    // bbport: GPU breadcrumbs (vk_breadcrumbs.h).
+    // engine: GPU breadcrumbs (vk_breadcrumbs.h).
     buffer_marker = add_extension(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
     if (attachment_feedback_loop) {
@@ -377,17 +377,17 @@ bool Instance::CreateDevice() {
     }
     image_view_min_lod = add_extension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    // bbport: guest direct memory allocated here and mapped by the runtime (BbGuestMemory).
+    // engine: guest direct memory allocated here and mapped by the runtime (BbGuestMemory).
     guest_memory_export = add_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
                           add_extension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
-    // bbport: FSR 4 v07 INT8 (vk_temporal_upscaler): quad derivatives in compute shaders.
+    // engine: FSR 4 v07 INT8 (vk_temporal_upscaler): quad derivatives in compute shaders.
     compute_shader_derivatives = add_extension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
-    // bbport: FSR 4.1.1 passes (dot2 of halves accumulated in float, as vkd3d-proton translates them).
+    // engine: FSR 4.1.1 passes (dot2 of halves accumulated in float, as vkd3d-proton translates them).
     mixed_float_dot_product =
         feature_chain.get<vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE>()
             .shaderMixedFloatDotProductFloat16AccFloat32 &&
         add_extension(VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME);
-    // bbport: FSR 4.1.1's FP8 variant (RDNA4): FP8 cooperative matrices. Cooperative matrices
+    // engine: FSR 4.1.1's FP8 variant (RDNA4): FP8 cooperative matrices. Cooperative matrices
     // alone (FP16) run it emulated, for testing (BB_FSR411_VARIANT=fp8emu).
     cooperative_matrix =
         feature_chain.get<vk::PhysicalDeviceCooperativeMatrixFeaturesKHR>().cooperativeMatrix &&
@@ -435,7 +435,7 @@ bool Instance::CreateDevice() {
         .queueCount = static_cast<u32>(queue_priorities.size()),
         .pQueuePriorities = queue_priorities.data(),
     };
-    // bbport: a queue of a compute and transfer family without graphics, for reading back GPU
+    // engine: a queue of a compute and transfer family without graphics, for reading back GPU
     // data the GPU finished writing long ago without waiting behind the queued frame
     // (BufferCache::DownloadMemory). BB_READBACK_QUEUE=0 turns it off.
     std::array<vk::DeviceQueueCreateInfo, 2> queue_infos{queue_info};
@@ -457,7 +457,7 @@ bool Instance::CreateDevice() {
         }
     }
 
-    // SacredFire: the device extensions NVIDIA's DLSS needs (RTX GPUs, when its bridge is present).
+    // Engine: the device extensions NVIDIA's DLSS needs (RTX GPUs, when its bridge is present).
     if (auto* dlss = DlssNgx::Get()) {
         const std::vector<std::string> already(enabled_extensions.begin(), enabled_extensions.end());
         for (const char* name : dlss->DeviceExtensions(*instance, physical_device, already)) {
@@ -501,7 +501,7 @@ bool Instance::CreateDevice() {
                 .shaderImageGatherExtended = features.shaderImageGatherExtended,
                 .shaderStorageImageExtendedFormats = features.shaderStorageImageExtendedFormats,
                 .shaderStorageImageMultisample = features.shaderStorageImageMultisample,
-                // bbport: required by the FSR 3 accumulate shaders (vk_temporal_upscaler).
+                // engine: required by the FSR 3 accumulate shaders (vk_temporal_upscaler).
                 .shaderStorageImageWriteWithoutFormat =
                     features.shaderStorageImageWriteWithoutFormat,
                 .shaderClipDistance = features.shaderClipDistance,
@@ -777,7 +777,7 @@ void Instance::CreateAllocator() {
         .vkGetInstanceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
         .vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr,
     };
-    // bbport: new device memory per frame (BB_FRAME_LOG alloc_mb).
+    // engine: new device memory per frame (BB_FRAME_LOG alloc_mb).
     static const VmaDeviceMemoryCallbacks memory_callbacks = {
         .pfnAllocate = [](VmaAllocator, uint32_t, VkDeviceMemory, VkDeviceSize size, void*) {
             BbStats::device_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
@@ -787,7 +787,7 @@ void Instance::CreateAllocator() {
         },
     };
 
-    // bbport: 64 MiB blocks (VMA default 256 MiB). A block goes back to the driver only once
+    // engine: 64 MiB blocks (VMA default 256 MiB). A block goes back to the driver only once
     // empty: images freed here and there (the texture collector) left 256 MiB blocks mostly
     // empty and held. BB_VMA_BLOCK_MB=N.
     static const VkDeviceSize block_size = [] {
@@ -829,7 +829,7 @@ void Instance::CollectDeviceParameters() {
     const std::string api_version = GetReadableVersion(properties.apiVersion);
     const std::string extensions = fmt::format("{}", fmt::join(available_extensions, ", "));
 
-    // bbport: in every log (reports of hangs and device loss need it; LOG_INFO is filtered out).
+    // engine: in every log (reports of hangs and device loss need it; LOG_INFO is filtered out).
     u64 device_local = 0;
     for (u32 i = 0; i < memory_properties.memoryHeapCount; ++i) {
         if (memory_properties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {

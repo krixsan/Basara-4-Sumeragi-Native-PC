@@ -286,7 +286,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
 
 // Defined before the constructor: libc++ needs the complete type where ~unique_ptr is
 // instantiated (the constructor's cleanup path).
-/// bbport BB_ASYNC_PIPELINES: worker threads creating graphics pipelines (the driver's compile,
+/// engine BB_ASYNC_PIPELINES: worker threads creating graphics pipelines (the driver's compile,
 /// vkCreateGraphicsPipelines, with its own VkPipelineCache synchronization). Jobs run in order.
 class PipelineCompiler {
 public:
@@ -399,7 +399,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supports_shader_subgroup_clock = instance_.IsShaderSubgroupClockSupported(),
         .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
                                       instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
-        // bbport: older NVIDIA (Pascal) has no barycentrics; BB_INTERP_INT_FIX=0/1 overrides.
+        // engine: older NVIDIA (Pascal) has no barycentrics; BB_INTERP_INT_FIX=0/1 overrides.
         .needs_integer_interpolation_fix = [&] {
             if (const char* env = std::getenv("BB_INTERP_INT_FIX")) {
                 return env[0] == '1';
@@ -416,7 +416,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     };
     WarmUp();
 
-    // bbport: persist the driver's pipeline cache in the game's user/cache directory. Without
+    // engine: persist the driver's pipeline cache in the game's user/cache directory. Without
     // initialData every launch recompiled every effect from scratch; the first use of a move
     // (jurus) in a fight then stalled on the compile. A cache from another driver/device is
     // rejected by Vulkan, in which case we start empty instead of failing to boot.
@@ -461,6 +461,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     pipeline_cache = std::move(cache);
     LOG_INFO(Render_Vulkan, "Pipeline cache: {} ({} bytes loaded)",
              Common::FS::PathToUTF8String(pipeline_cache_path), initial_data.size());
+    fprintf(stderr, "[PERF] Loaded pipeline cache: %zu bytes\n", initial_data.size());
 }
 
 struct PipelineCache::PendingPipeline {
@@ -506,6 +507,8 @@ void PipelineCache::SavePipelineCache() {
             LOG_INFO(Render_Vulkan, "Saved pipeline cache: {} ({} bytes, {} new pipelines)",
                      Common::FS::PathToUTF8String(pipeline_cache_path), data.size(),
                      num_new_pipelines);
+            fprintf(stderr, "[PERF] Saved pipeline cache: %zu bytes (%u new pipelines)\n", 
+                    data.size(), num_new_pipelines);
             saved_new_pipelines += num_new_pipelines;
             num_new_pipelines = 0;
             last_cache_save = std::chrono::steady_clock::now();
@@ -533,7 +536,7 @@ PipelineCache::~PipelineCache() {
     SavePipelineCache();
 }
 
-// bbport: shader/pipeline compile time on the GPU thread, reported by BB_FRAME_STATS.
+// engine: shader/pipeline compile time on the GPU thread, reported by BB_FRAME_STATS.
 std::atomic<u64> g_bb_compile_ns;
 std::atomic<u32> g_bb_compiles;
 namespace {
@@ -590,7 +593,7 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
 }
 
 namespace {
-/// bbport BB_ASYNC_PIPELINES: per render target (its address), how many frames in a row draws
+/// engine BB_ASYNC_PIPELINES: per render target (its address), how many frames in a row draws
 /// went to it. Only the GPU thread (pipeline selection) touches it.
 struct TargetStreak {
     u32 last_frame = ~0u;
@@ -650,7 +653,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     if (const auto found = graphics_pipelines.find(sel.graphics_key); found != graphics_pipelines.end()) {
         return found->second.get();
     }
-    // bbport BB_ASYNC_PIPELINES: being compiled on a worker, or to be.
+    // engine BB_ASYNC_PIPELINES: being compiled on a worker, or to be.
     const bool skippable = AsyncSkippable(sel, indirect);
     if (const auto pending = pending_graphics.find(sel.graphics_key); pending != pending_graphics.end()) {
         const std::shared_ptr<PendingPipeline> job = pending->second;
@@ -754,13 +757,13 @@ bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indi
     // loading screens (a frame of fewer than 300 draws before this one). The pipeline must not
     // depend on the draw's vertex buffers (VK_EXT_vertex_input_dynamic_state). A size rule (the
     // scene's, the output's) missed most passes: many set a 16384 scissor.
-    // SacredFire: opt-in (BB_ASYNC_PIPELINES=1). On the Steam Deck, runs with pipelines compiling
+    // Engine: opt-in (BB_ASYNC_PIPELINES=1). On the Steam Deck, runs with pipelines compiling
     // in the background hit the clobbered-dword bug (STATUS.md: a dword of a submitted command
     // buffer or a shader address register overwritten with 1) within 3-4 minutes in 2 of 3 cold
-    // starts; runs without it did not (docs/sacredfire/11-upstream-backports.md).
-    // SacredFire: BB_ASYNC_PIPELINES when set, else the in-game menu's switch (applies at once).
+    // starts; runs without it did not (docs/engine/11-upstream-backports.md).
+    // Engine: BB_ASYNC_PIPELINES when set, else the in-game menu's switch (applies at once).
     static const char* const env = std::getenv("BB_ASYNC_PIPELINES");
-    const bool enabled = env && *env ? env[0] != '0' : true;
+    const bool enabled = env && *env ? env[0] != '0' : BbSettings::Get().async_pipelines.load();
     if (!enabled || !instance.IsVertexInputDynamicState() || !selection.regs) {
         return false;
     }
@@ -1187,7 +1190,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                                 Shader::Backend::Bindings& binding) {
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
     if (sel.worker) {
-        // bbport: draw-preparation worker: look up only, with the worker's own Info copy.
+        // engine: draw-preparation worker: look up only, with the worker's own Info copy.
         auto& worker = *sel.worker;
         std::shared_lock lk{programs_mutex};
         const auto found_program = program_cache.find(params.hash);
@@ -1264,7 +1267,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
 
     vk::ShaderModule module{};
 
-    // bbport: consecutive draws of a program almost always use the same permutation.
+    // engine: consecutive draws of a program almost always use the same permutation.
     auto it = program->last_used < program->modules.size() &&
                       program->modules[program->last_used].spec == spec
                   ? program->modules.begin() + program->last_used

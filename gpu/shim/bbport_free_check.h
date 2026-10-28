@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: BB_FREE_CHECK=1 — a diagnostic for the guest heap corruption at guest offset
+// engine: BB_FREE_CHECK=1 — a diagnostic for the guest heap corruption at guest offset
 // 0x263b8e7. The game keeps its GPU label objects (48 bytes) in a small-object pool: 4 KiB
 // pages, blocks from the page start, a header at page + 0xfc0 (list links, free list head,
 // free count), the free list linked through the first qword of each free block. The crash is

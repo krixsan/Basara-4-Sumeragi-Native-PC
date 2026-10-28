@@ -2,7 +2,7 @@
 #include "bbport_guest_memory.h"
 
 #ifdef _WIN32
-// SacredFire (Windows): no dma-buf on Windows; the PC memory model stays off and direct memory
+// Engine (Windows): no dma-buf on Windows; the PC memory model stays off and direct memory
 // stays in the runtime's pagefile section.
 namespace BbGuestMemory {
 bool Usable(const Vulkan::Instance&) { return false; }

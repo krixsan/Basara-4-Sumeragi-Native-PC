@@ -31,7 +31,7 @@ namespace Vulkan {
 
 namespace {
 
-// SacredFire: diagnostics for a failed FSR 3 context creation. The FFX backend loads its
+// Engine: diagnostics for a failed FSR 3 context creation. The FFX backend loads its
 // Vulkan entry points through the getDeviceProcAddr it is given: this one logs every call
 // that fails during creation (which allocation, how large, from which memory type).
 PFN_vkGetDeviceProcAddr trace_gdpa = nullptr;
@@ -142,7 +142,7 @@ void PrintMemoryState(const Instance& instance) {
     std::fflush(stdout);
 }
 
-// Moving objects (CTR's velocity target, memory channel 2 marks them; their own motion in
+// Moving objects (the game's velocity target, memory channel 2 marks them; their own motion in
 // channels 1 and 0): BB_FSR3_MV="sx,sy,bias,mode,cx,cy" adds pixels = v * s to the camera's
 // motion, with e = channel - bias and v = e (mode 1) or sign(e) e^2 (mode 2); mode 0 (default)
 // leaves them still on the screen, which measured best. BB_FSR3_MV=nocamera drops the camera's
@@ -390,7 +390,7 @@ vk::ImageView CtrFsr3::SourceView(const VideoCore::Image& image, vk::Format form
 }
 
 // The display pass reads the game's frame through a view with its own format and channel
-// swizzle (CTR's swaps red and blue); the upscaled frame is read the same way.
+// swizzle (the game's swaps red and blue); the upscaled frame is read the same way.
 vk::ImageView CtrFsr3::OutputView(vk::Format format, vk::ComponentMapping mapping) {
     for (auto& entry : output_views) {
         if (entry.view && entry.format == format && entry.mapping == mapping) {
@@ -848,7 +848,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
             dlss_warned = true;
             std::printf("DLSS: not available (%s); FSR 3 instead\n",
                         dlss ? dlss->Problem().c_str()
-                             : "sacredfire_dlss.dll or nvngx_dlss.dll is not next to the game");
+                             : "engine_dlss.dll or nvngx_dlss.dll is not next to the game");
             std::fflush(stdout);
         }
     }

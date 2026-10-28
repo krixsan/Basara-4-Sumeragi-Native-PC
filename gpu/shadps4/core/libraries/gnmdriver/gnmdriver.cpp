@@ -105,7 +105,7 @@ void ReleaseSubmissionLock() {
     cv_lock.notify_all();
 }
 
-// bbport BB_SUBMIT_LOCK=decode: frames (sceGnmSubmitDone calls) the GPU has finished.
+// engine BB_SUBMIT_LOCK=decode: frames (sceGnmSubmitDone calls) the GPU has finished.
 static u64 frames_retired{};
 
 void NoteFramesRetired(u64 frames) {
@@ -297,7 +297,7 @@ s32 PS4_SYSV_ABI sceGnmAddEqEvent(OrbisKernelEqueue eq, u64 id, void* udata) {
 
 int PS4_SYSV_ABI sceGnmAreSubmitsAllowed() {
     LOG_TRACE(Lib_GnmDriver, "called");
-    // bbport (frame stats): how often the guest asks, and how often it hears no.
+    // engine (frame stats): how often the guest asks, and how often it hears no.
     const bool allowed = submission_lock == 0;
     BbStats::submits_allowed_queries.fetch_add(1, std::memory_order_relaxed);
     if (!allowed) {

@@ -31,7 +31,7 @@ int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
-/* SacredFire: 1 once after the in-game menu's "Rescan controllers" button (runtime_pad.c restarts
+/* Engine: 1 once after the in-game menu's "Rescan controllers" button (runtime_pad.c restarts
  * SDL's gamepad subsystem and enumerates devices afresh); cleared by the call. */
 int bbgpu_pad_rescan_take(void);
 /* v0.4: a notice over the game for a few seconds (an unlocked trophy: its name, what it was for,

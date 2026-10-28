@@ -103,6 +103,96 @@ The wizard links the modules and creates `out/boot-linked.bin` in 15–30 second
 
 ---
 
+## Graphics Settings (v2.1)
+
+### Quality Options (`basara.ini`)
+
+**New in v2.1**: Fine-grained graphics quality control for balancing visual fidelity and performance.
+
+```ini
+# Render resolution (scene resolution before upscaling)
+render_res=1080              # 720 | 1080 | 1440 | 2160
+
+# Custom resolution scale multiplier (supersampling/downsampling)
+render_scale=1.0             # 0.5 (half) to 2.0 (double) - 1.0 is native
+
+# Anti-aliasing method
+anti_aliasing=fxaa           # off | fxaa | msaa2 | msaa4
+
+# Anisotropic filtering (texture sharpness at angles)
+anisotropy=16                # 0 (off) | 2 | 4 | 8 | 16 (recommended)
+
+# AMD FSR upscaling and sharpening
+fsr1=1                       # 0 (off) | 1 (on)
+rcas=1                       # 0 (off) | 1 (on) - contrast adaptive sharpening
+rcas_strength=75             # 0 (subtle) to 100 (aggressive)
+
+# Performance mode (v2.1: now respects manual overrides)
+performance_mode=0           # 0 (off) | 1 (suggests 720p, respects render_res)
+```
+
+### Recommended Presets
+
+| GPU Tier | Preset | Settings | Expected FPS |
+|----------|--------|----------|--------------|
+| **Low-End** (GTX 1050, RX 560) | Performance | `render_res=720`<br>`anti_aliasing=off`<br>`rcas=0` | 60 FPS |
+| **Mid-Range** (GTX 1060, RX 580) | Balanced | `render_res=900`<br>`anti_aliasing=fxaa`<br>`rcas=1` | 45-60 FPS |
+| **High-End** (RTX 2060, RX 6600) | High | `render_res=1080`<br>`anti_aliasing=fxaa`<br>`anisotropy=16` | 60-90 FPS |
+| **Enthusiast** (RTX 3070+, RX 6800+) | Ultra | `render_scale=1.5`<br>`anti_aliasing=msaa2`<br>`render_res=1440` | 60+ FPS |
+
+### Visual Quality Explained
+
+**Render Resolution** (`render_res`):
+- Internal scene resolution before upscaling to your display
+- Higher = sharper textures and geometry, but more GPU load
+- `720p` = 44% pixels vs 1080p (blurrier but faster)
+- `1080p` = native quality (recommended baseline)
+- `1440p` = 77% more pixels vs 1080p (sharper, GPU-intensive)
+
+**Render Scale** (`render_scale`):
+- Multiplier applied to render resolution (supersampling/downsampling)
+- `0.5` = half resolution (performance mode)
+- `1.0` = native (default)
+- `1.5` = 150% resolution (high-quality supersampling)
+- `2.0` = double resolution (ultra-sharp, very GPU-intensive)
+- **Example**: `render_res=1080` + `render_scale=1.5` = renders at 1620p, downsamples to 1080p
+
+**Anti-Aliasing** (`anti_aliasing`):
+- Smooths jagged edges on geometry
+- `off` = fastest, visible stair-stepping on edges
+- `fxaa` = fast post-process, slight blur, recommended for most
+- `msaa2` = high quality, 2x samples per pixel, moderate GPU cost
+- `msaa4` = highest quality, 4x samples, GPU-intensive
+
+**Anisotropic Filtering** (`anisotropy`):
+- Sharpens textures viewed at angles (floors, walls, terrain)
+- Minimal performance cost on modern GPUs
+- `16x` strongly recommended (default)
+
+**RCAS Sharpening** (`rcas`, `rcas_strength`):
+- AMD FidelityFX Contrast Adaptive Sharpening
+- Recovers detail lost during upscaling
+- `rcas_strength=75` = balanced sharpness (recommended)
+- `rcas_strength=100` = maximum sharpness (may introduce artifacts)
+
+### v2.1 Changes
+
+**Performance Mode No Longer Forces 720p**:
+- **v2.0 behavior**: `performance_mode=1` forced `render_res=720` (no override)
+- **v2.1 behavior**: `performance_mode=1` *suggests* 720p only if `render_res` not set
+- **Result**: You can now use `performance_mode=1` + `render_res=1080` for CPU optimizations without visual quality loss
+
+**RCAS Respects User Setting in Performance Mode**:
+- **v2.0 behavior**: Performance mode always disabled RCAS
+- **v2.1 behavior**: Performance mode only disables RCAS if `rcas=0` explicitly set
+- **Result**: Sharper image even in performance mode
+
+**New Quality Controls**:
+- `render_scale`: Custom resolution multiplier for supersampling
+- `anti_aliasing`: FXAA and MSAA options (FXAA recommended)
+
+---
+
 ## Configuration (`basara.ini`)
 
 Settings are synchronized between the graphical launcher, in-game overlay (`Insert` or `L3+R3`), and `basara.ini`:
@@ -111,11 +201,15 @@ Settings are synchronized between the graphical launcher, in-game overlay (`Inse
 |---|---|---|
 | `output_res` | `1920x1080` | Window and display presentation resolution |
 | `render_res` | `1080` | Internal rendering target resolution (`720`, `1080`, `1440`, `2160`) |
+| `render_scale` | `1.0` | Custom resolution multiplier (`0.5` to `2.0`, supersampling at >1.0) *(v2.1)* |
+| `anti_aliasing` | `fxaa` | Anti-aliasing method (`off`, `fxaa`, `msaa2`, `msaa4`) *(v2.1)* |
 | `fullscreen` | `1` | `1` for borderless/exclusive fullscreen, `0` for windowed mode |
 | `fps_limit` | `144` | Target framerate limit (`60`, `90`, `120`, `144`, `240`, `0` for unlimited) |
 | `anisotropy` | `16` | Forced Anisotropic Filtering level (`0`, `2`, `4`, `8`, `16`) |
 | `fsr1` | `1` | `1` to enable AMD FSR 1.0 spatial upscaling |
 | `rcas` | `1` | `1` to enable Robust Contrast Adaptive Sharpening |
+| `rcas_strength` | `75` | RCAS sharpening intensity (`0` subtle to `100` aggressive) *(v2.1)* |
+| `performance_mode` | `0` | `1` suggests 720p but respects `render_res` override *(v2.1: no longer forces 720p)* |
 | `process_priority` | `above_normal` | Windows CPU scheduling priority (`normal`, `above_normal`, `high`) |
 | `telemetry_upload` | `ask` | Crash reporter behavior (`ask`, `never`, `always`) |
 | `first_run_done` | `0` | Setup wizard completion state flag |

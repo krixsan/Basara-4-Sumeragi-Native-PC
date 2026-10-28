@@ -93,15 +93,15 @@ public:
                  PageManager& tracker);
     ~TextureCache();
 
-    /// bbport (diagnostics): the images over [addr, addr + size), described briefly.
+    /// engine (diagnostics): the images over [addr, addr + size), described briefly.
     std::string DescribeImagesIn(VAddr addr, u64 size);
 
-    /// bbport: changes whenever an image is registered or unregistered.
+    /// engine: changes whenever an image is registered or unregistered.
     [[nodiscard]] u64 RegistryGeneration() const noexcept {
         return registry_generation.load(std::memory_order_acquire);
     }
 
-    /// bbport: FindImage's access tick for an image found by a memoized lookup. The LRU touch
+    /// engine: FindImage's access tick for an image found by a memoized lookup. The LRU touch
     /// FindImage also does happens in UpdateImage (FindTexture), which every binding reaches.
     void MarkFound(ImageId image_id) {
         if (!image_id || !slot_images.is_allocated(image_id)) {
@@ -132,7 +132,7 @@ public:
     /// Retrieves image whose address matches provided
     [[nodiscard]] ImageId FindImageFromRange(VAddr address, size_t size, bool ensure_valid = true);
 
-    /// bbport: a FindView result remembered by the caller for the same image and view info.
+    /// engine: a FindView result remembered by the caller for the same image and view info.
     struct ViewMemo {
         ImageId image_id{};
         const void* backing = nullptr;
@@ -151,7 +151,7 @@ public:
     /// Retrieves the depth target with specified properties
     [[nodiscard]] ImageView& FindDepthTarget(ImageId image_id, const ImageDesc& desc);
 
-    /// bbport: whether UpdateImage has nothing to do for this image (its fast path).
+    /// engine: whether UpdateImage has nothing to do for this image (its fast path).
     [[nodiscard]] bool IsUpToDate(ImageId image_id) const {
         if (!image_id || !slot_images.is_allocated(image_id)) {
             return false;
@@ -172,7 +172,7 @@ public:
             LOG_ERROR(Render_Vulkan, "UpdateImage: invalid image id {}", image_id.index);
             return;
         }
-        // bbport: a clean image already tracked and touched in this GC period needs nothing.
+        // engine: a clean image already tracked and touched in this GC period needs nothing.
         // Every texture binding comes here; the mutex (shared with the fault handlers of the
         // guest threads) was ~3% of the GPU thread. Flags are read atomically: an invalidation
         // racing with this check races the same way with the locked path.
@@ -249,7 +249,7 @@ public:
         return slot_image_views[id];
     }
 
-    /// bbport: the image behind GetFallbackView().
+    /// engine: the image behind GetFallbackView().
     [[nodiscard]] Image& GetFallbackImage() {
         if (!fallback_image || !fallback_image->HasBacking()) {
             CreateFallbackTexture();
@@ -261,7 +261,7 @@ public:
         std::abort();
     }
 
-    /// bbport: a valid 1x1 RGBA8 texture view used when a guest texture cannot be parsed
+    /// engine: a valid 1x1 RGBA8 texture view used when a guest texture cannot be parsed
     /// or an image/view id is stale. Never returns a null Vulkan handle in normal use.
     [[nodiscard]] ImageView& GetFallbackView() {
         if (!fallback_view_id || !fallback_views.is_allocated(fallback_view_id) ||
@@ -346,7 +346,7 @@ public:
     /// Runs the garbage collector.
     void RunGarbageCollector();
 
-    /// bbport: VRAM ran out (BufferCache::AllocateResidency, any thread): for the next 30 s the
+    /// engine: VRAM ran out (BufferCache::AllocateResidency, any thread): for the next 30 s the
     /// collector evicts by submissions under pressure again, as before 0.5, instead of keeping
     /// textures unused for seconds.
     static void NoteVramShort();
@@ -423,7 +423,7 @@ private:
     /// Thread function for copying downloaded images out to CPU memory.
     void DownloadedImagesThread(const std::stop_token& token);
 
-    /// bbport: create the 1x1 fallback texture/view used by GetFallbackView().
+    /// engine: create the 1x1 fallback texture/view used by GetFallbackView().
     void CreateFallbackTexture();
 
     /// Create an image from the given parameters. On VMA OOM, evict idle cached textures and
@@ -431,7 +431,7 @@ private:
     /// iterating its overlap list.
     [[nodiscard]] ImageId InsertImage(const ImageInfo& info, bool allow_eviction = true);
 
-    /// bbport: free clean, idle cached images after an allocation failure. The caller holds
+    /// engine: free clean, idle cached images after an allocation failure. The caller holds
     /// `mutex`; this waits for deferred image destruction so the retry sees the freed memory.
     void EvictImagesForAllocation();
 
@@ -489,7 +489,7 @@ private:
     u64 total_used_memory = 0;
     u64 gc_evictions = 0, gc_downloads = 0; ///< bbport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
-    /// bbport: gc_tick at each of the last 64 seconds (GarbageCollectImages).
+    /// engine: gc_tick at each of the last 64 seconds (GarbageCollectImages).
     std::array<u64, 64> gc_tick_at_second{};
     u64 gc_second = 0;
     u64 trigger_gc_memory = 0;
@@ -506,7 +506,7 @@ private:
     PageTable page_table;
     std::mutex mutex;
     static inline std::atomic<u64> vram_short_until{0}; ///< steady seconds (NoteVramShort)
-    // bbport: FindImage results for unchanged image registrations (guarded by `mutex`).
+    // engine: FindImage results for unchanged image registrations (guarded by `mutex`).
     struct FindImageCacheEntry {
         VAddr address = 0;
         u64 size = 0;

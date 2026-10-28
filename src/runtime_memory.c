@@ -8,6 +8,7 @@
  * encode 40-bit addresses, so host-default 0x7f... addresses would not fit. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,7 +101,7 @@ static Vma *vmas; static size_t vma_count, vma_capacity;
 static unsigned char *backing_base; /* second view of the pool: host writes bypass guest/GPU page protection */
 #ifndef _WIN32
 static int pool_fd=-1;
-/* bbport: direct memory in GPU-visible system memory the GPU library allocates (dma-buf chunks,
+/* engine: direct memory in GPU-visible system memory the GPU library allocates (dma-buf chunks,
  * BB_GUEST_GPU_MEMORY=1): the GPU reads the game's data in place instead of the CPU copying it
  * into staging buffers first. Chunks are allocated when the game allocates direct memory in them;
  * a chunk the GPU library cannot provide stays in the memfd. */
@@ -142,7 +143,7 @@ static uint64_t flex_bitmap[FLEX_SPAN_MAX/PAGE/64];
 /* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
 typedef void (*GpuRange)(uintptr_t address, uint64_t size);
 static GpuRange hook_map, hook_unmap, hook_invalidate;
-static GpuRange hook_note_write; /* bbport: data written into GPU memory (runtime_memory_note_write) */
+static GpuRange hook_note_write; /* engine: data written into GPU memory (runtime_memory_note_write) */
 enum { HOOK_MAP, HOOK_UNMAP, HOOK_INVALIDATE };
 typedef struct { int kind; uintptr_t address; uint64_t size; } PendingHook;
 static PendingHook pending[64]; static size_t pending_count;
@@ -177,7 +178,10 @@ static DWORD win_prot(int prot) {
     return (prot & PROT_READ) ? PAGE_READONLY : PAGE_NOACCESS;
 }
 static void win_fail(const char *what, uintptr_t address, uint64_t size) {
-    fprintf(stderr,"STOP: %s failed at %p (+0x%" PRIx64 "), error %lu\n",what,(void *)address,size,GetLastError());
+    DWORD error=GetLastError();
+    fprintf(stderr,"STOP: %s failed at %p (+0x%" PRIx64 "), error %lu\n",what,(void *)address,size,error);
+    fflush(stderr);
+    LOG_ERROR("runtime_memory", "STOP: %s failed at %p (+0x%" PRIx64 "), error %lu", what, (void *)address, size, error);
     exit(21);
 }
 static size_t region_index(uintptr_t a) { /* first region with end > a */
@@ -201,8 +205,31 @@ static void region_erase(size_t at, size_t n) {
 /* The guest range is reserved before anything else can be placed there (runtime_start). */
 void runtime_memory_reserve(void) {
     if (region_count) return;
-    if (!VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0))
-        win_fail("reserving the PS4 address range (link with --disable-high-entropy-va)",USER_MIN,USER_MAX-USER_MIN);
+    void *base = VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0);
+    if (base) {
+        LOG_INFO("runtime_memory", "VirtualAlloc2 MEM_RESERVE_PLACEHOLDER succeeded at %p", base);
+        region_insert(0,(HostRegion){USER_MIN,USER_MAX,0,0});
+        return;
+    }
+    
+    DWORD error = GetLastError();
+    LOG_WARN("runtime_memory", "VirtualAlloc2 MEM_RESERVE_PLACEHOLDER failed (error %lu). Trying VirtualAlloc fallback...", error);
+    fprintf(stderr, "Runtime: VirtualAlloc2 placeholder failed (%lu), trying legacy VirtualAlloc...\n", error);
+    
+    /* Fallback: standard VirtualAlloc without placeholder support */
+    base = VirtualAlloc(NULL, USER_MAX - USER_MIN, MEM_RESERVE, PAGE_NOACCESS);
+    if (!base) {
+        error = GetLastError();
+        fprintf(stderr,"STOP: reserving the PS4 address range failed (%lu); the game will not be able to map guest memory\n",error);
+        fflush(stderr);
+        LOG_ERROR("runtime_memory", "VirtualAlloc fallback also failed (error %lu)", error);
+        /* Keep running so the failure is logged instead of exiting silently; the first guest
+         * mapping will fail with a diagnostic instead of the process vanishing at startup. */
+        return;
+    }
+    
+    LOG_INFO("runtime_memory", "VirtualAlloc fallback succeeded at %p", base);
+    fprintf(stderr, "Runtime: VirtualAlloc fallback succeeded at %p (placeholder unavailable, using legacy mode)\n", base);
     region_insert(0,(HostRegion){USER_MIN,USER_MAX,0,0});
 }
 static void view_map(const HostRegion *r, DWORD protect) {
@@ -896,7 +923,7 @@ static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, vo
     read_unlock();
     return ACCESS;
 }
-/* SacredFire: sceKernelDirectMemoryQuery: the allocated block containing `offset` (flags 0) or the
+/* Engine: sceKernelDirectMemoryQuery: the allocated block containing `offset` (flags 0) or the
  * first block at or after it (flags 1, FIND_NEXT); EACCES when none exists. */
 typedef struct { uint64_t start, end; int32_t type; int32_t reserved; } DirectQueryInfo;
 static ABI int32_t direct_memory_query(uint64_t offset, int flags, DirectQueryInfo *info, uint64_t info_size) {
@@ -1003,7 +1030,7 @@ void *runtime_low_map(size_t size, int prot) {
  * 1073741824 the lock-free UpdateImage path for clean, tracked images. */
 /* Bits 32 and up: the draw pipeline and related GPU thread work (gpu/shim/bbport_toggles.h). */
 uint64_t runtime_disabled_optimizations;
-/* bbport: a second number in BB_TOGGLE_FILE: temporary experiment bits (BbToggle::Experiment). */
+/* engine: a second number in BB_TOGGLE_FILE: temporary experiment bits (BbToggle::Experiment). */
 uint64_t runtime_experiment_bits;
 /* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
  * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
@@ -1027,7 +1054,7 @@ static void *toggle_watcher(void *path) {
     }
     return NULL;
 }
-/* bbport: the GPU library provides direct memory chunks (see CHUNK). */
+/* engine: the GPU library provides direct memory chunks (see CHUNK). */
 #ifdef _WIN32
 /* Windows: no dma-buf chunks; direct memory stays in the pagefile section. */
 void runtime_memory_set_guest_chunk_whole(int whole) { (void)whole; }
@@ -1050,7 +1077,7 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
     write_unlock();
     flush_hooks();
 }
-/* bbport: the CPU is about to write [address, address+size) without the guest's code doing it
+/* engine: the CPU is about to write [address, address+size) without the guest's code doing it
  * (a file read into it): the GPU side is told first (Rasterizer::InvalidateMemory), for the parts
  * the GPU can access, as a driver is told of a resource update. Its write tracking then has
  * nothing to catch there. */
@@ -1070,7 +1097,7 @@ void runtime_memory_note_write(uintptr_t address, uint64_t size) {
     GpuRange hook=hook_note_write ? hook_note_write : hook_invalidate;
     for (int i=0;i<n;++i) hook(starts[i],ends[i]-starts[i]);
 }
-/* bbport BB_GUEST_IN_PLACE without page protection: pages whose CPU writes the GPU side must hear
+/* engine BB_GUEST_IN_PLACE without page protection: pages whose CPU writes the GPU side must hear
  * of (a VRAM copy of them, a texture made from them), one bit per 4 KiB page below 2^40. The GPU
  * side sets and clears them where it used to protect; the writers it cannot see coming (libc
  * imports, file reads, hooked game code) check them after writing and tell it, as a driver is
@@ -1082,10 +1109,10 @@ void runtime_memory_set_cpu_write_hook(GpuRange hook) {
     if (!write_watch) {
 #ifdef _WIN32
         void *bits=VirtualAlloc(NULL,WATCH_LIMIT>>15,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
-        if (!bits) { fprintf(stderr,"bbport: write watch bitmap: error %lu\n",GetLastError()); return; }
+        if (!bits) { fprintf(stderr,"engine: write watch bitmap: error %lu\n",GetLastError()); return; }
 #else
         void *bits=mmap(NULL,WATCH_LIMIT>>15,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE,-1,0);
-        if (bits==MAP_FAILED) { perror("bbport: write watch bitmap"); return; }
+        if (bits==MAP_FAILED) { perror("engine: write watch bitmap"); return; }
 #endif
         write_watch=bits;
     }
@@ -1114,7 +1141,7 @@ void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size) {
         }
     }
 }
-/* bbport: where direct memory at a guest address lives (BB_GUEST_IN_PLACE: the GPU uses the game's
+/* engine: where direct memory at a guest address lives (BB_GUEST_IN_PLACE: the GPU uses the game's
  * memory where it is): its offset in direct memory and the end of the mapping, which is contiguous
  * there. 0 for anything else (flexible memory, reserved or unmapped addresses). */
 int runtime_memory_direct_phys(uintptr_t address, uint64_t *phys, uintptr_t *end) {
@@ -1128,7 +1155,7 @@ int runtime_memory_direct_phys(uintptr_t address, uint64_t *phys, uintptr_t *end
     read_unlock();
     return ok;
 }
-/* bbport: protection and direct memory type of the mapping at address (type -1: not direct
+/* engine: protection and direct memory type of the mapping at address (type -1: not direct
  * memory); 0 when nothing is mapped there. */
 int runtime_memory_vma_info(uintptr_t address, int *prot, int *type, uintptr_t *end) {
     read_lock();

@@ -991,8 +991,8 @@ Id ImageType(EmitContext& ctx, const ImageResource& desc, Id sampled_type) {
     const auto type = image.GetViewType(desc.is_array);
     const u32 sampled = desc.is_written ? 2 : 1;
     switch (type) {
-    // sacredfire: 1D images are lowered to 2D with height 1 (as upstream shadPS4 #5133): a 1D
-    // view of a 2D image is not valid Vulkan, and CTR samples height-1 render targets as 1D.
+    // engine: 1D images are lowered to 2D with height 1 (as upstream shadPS4 #5133): a 1D
+    // view of a 2D image is not valid Vulkan, and the game samples height-1 render targets as 1D.
     case AmdGpu::ImageType::Color1D:
         return ctx.TypeImage(sampled_type, spv::Dim::Dim2D, false, false, false, sampled, format);
     case AmdGpu::ImageType::Color1DArray:

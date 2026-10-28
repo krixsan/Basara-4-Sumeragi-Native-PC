@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: FSR 4 has no reactive input (its model reads colour, depth, motion, history and
+// engine: FSR 4 has no reactive input (its model reads colour, depth, motion, history and
 // exposure). Where the reactive mask marks the game's blended effects (fog, light shafts, water,
 // particles: no motion vectors fit them), its output is blended with this frame upscaled
 // bilinearly, so the effects do not drag history along (fog over the Cathedral Ward stairs).

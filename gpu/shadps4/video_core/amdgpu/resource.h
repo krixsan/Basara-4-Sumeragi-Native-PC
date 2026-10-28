@@ -10,7 +10,7 @@
 #include "video_core/amdgpu/tiling.h"
 
 namespace AmdGpu {
-/// SacredFire (GitHub issues #16/#18): true when the game's MSAA is off (bbport.ini msaa=0, the
+/// Engine (GitHub issues #16/#18): true when the game's MSAA is off (basara.ini msaa=0, the
 /// default; BB_NO_MSAA overrides): every multisampled target is rendered with one sample on the
 /// host, the guest memory layout unchanged, and MSAA texture reads become plain 2D reads.
 /// Defined in shim/bbport_settings.cpp; fixed for the session.
@@ -507,7 +507,7 @@ struct Sampler {
         case AnisoRatio::Sixteen:
             return 16.0f;
         default:
-            // sacredfire: CTR's adventure mode binds samplers with a reserved ratio (5..7); the
+            // engine: the game's adventure mode binds samplers with a reserved ratio (5..7); the
             // hardware clamps to its maximum, so do we instead of stopping.
             return 16.0f;
         }

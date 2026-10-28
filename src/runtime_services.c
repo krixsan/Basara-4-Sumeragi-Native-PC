@@ -7,9 +7,6 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
-#ifdef LEGACY_GAME_HOOKS
-#include "ctr_trophies.h"
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,7 +47,7 @@ static int new_id(void) { pthread_mutex_lock(&lock); int id=next_id++; pthread_m
 static void note(const char *what) { printf("Runtime: %s\n",what); }
 
 /* ---- UserService ---- */
-/* SacredFire: UserService events: login of user 1 at start, then logins/logouts of users 2..4 as
+/* Engine: UserService events: login of user 1 at start, then logins/logouts of users 2..4 as
  * the in-game controller ports are assigned and their gamepads connect (runtime_pad.c). */
 static struct { int user, login; } user_events[32];
 static int user_event_count=0, user_events_seeded;
@@ -309,12 +306,12 @@ static ABI int32_t save_result(void *r) {
     fflush(stderr);
     return 0;
 }
-/* SacredFire: the web browser and invitation dialogs close at once with a zeroed result (user
+/* Engine: the web browser and invitation dialogs close at once with a zeroed result (user
  * closed / no invitation sent); Close on the browser is accepted. */
 static ABI int32_t webbrowser_result(void *result) { if (result) memset(result,0,16); return 0; }
 static ABI int32_t invitation_result(void *result) { if (result) memset(result,0,16); return 0; }
 static ABI int32_t profile_result(void *result) { if (result) memset(result,0,4); return 0; }
-/* SacredFire: the message dialog closed as if the user pressed its first button: result OK (0),
+/* Engine: the message dialog closed as if the user pressed its first button: result OK (0),
  * button 1 (OK/Yes). OrbisMsgDialogResult: mode, result, buttonId, reserved[32]. */
 typedef struct { int32_t mode, result, button; char reserved[32]; } MsgDialogResult;
 static ABI int32_t msg_result(MsgDialogResult *r) {
@@ -481,23 +478,7 @@ static void trophy_load(void) {
         if (n>=4 && fields[3] && *fields[3]) { free(trophy_names[id]); trophy_names[id]=strdup(fields[3]); }
         if (n>=5 && fields[4] && *fields[4]) { free(trophy_details[id]); trophy_details[id]=strdup(fields[4]); }
     }
-    if (f) fclose(f);
     trophy_total=listed ? listed : trophy_count_from_trp();
-#ifdef LEGACY_GAME_HOOKS
-    /* No trophies.tsv (the launcher writes it): CTR's own list (ctr_trophies.h). */
-    if (!listed && trophy_total==CTR_TROPHY_COUNT && (!strcmp(trophy_title,"CUSA13795") || !strcmp(trophy_title,"CUSA14876"))) {
-        const char *lang=getenv("BB_LANGUAGE");
-        const int es=lang && (!strcmp(lang,"3") || !strcmp(lang,"20"));
-        for (int i=0;i<CTR_TROPHY_COUNT;++i) {
-            const CtrTrophy *t=&ctr_trophies[i];
-            trophy_grade[t->id]=t->grade;
-            if (t->grade=='P') trophy_platinum=t->id;
-            trophy_names[t->id]=strdup(t->name);
-            trophy_details[t->id]=strdup(es ? t->es : t->en);
-        }
-        listed=CTR_TROPHY_COUNT;
-    }
-#endif
     if (trophy_platinum<0 && !listed && trophy_total>1) trophy_platinum=0; /* the usual id when the grades are unknown */
     int before=0;
     for (int i=0;i<TROPHY_MAX;++i) before+=trophy_unlocked_at[i]!=0;
@@ -672,7 +653,7 @@ static ABI int32_t playgo_close(int32_t handle) {
 }
 static ABI int32_t playgo_term(void) { playgo_handle=0; return 0; }
 
-/* ---- SacredFire: console features that are absent or idle offline ----
+/* ---- Engine: console features that are absent or idle offline ----
  * SharePlay: initialized, nothing connected, prohibition accepted. */
 static int shareplay_prohibition;
 static ABI int32_t shareplay_init(void *heap,uint64_t size) { (void)heap; (void)size; return 0; }

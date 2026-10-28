@@ -2,7 +2,7 @@
 #include "bbport_wait_trace.h"
 
 #ifdef _WIN32
-// SacredFire (Windows): BB_WAIT_TRACE needs backtrace() (glibc); off on Windows.
+// Engine (Windows): BB_WAIT_TRACE needs backtrace() (glibc); off on Windows.
 namespace BbWaitTrace {
 bool Enabled() { return false; }
 Scope::Scope() {}

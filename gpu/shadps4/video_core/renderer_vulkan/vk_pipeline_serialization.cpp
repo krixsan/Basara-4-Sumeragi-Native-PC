@@ -13,9 +13,9 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 9u; // sacredfire: GS ring slot fold, 1D images as 2D; MSAA setting
-static constexpr u32 ShaderMetaVersion = 8u; // sacredfire: GS runtime info compared in full
-static constexpr u32 PipelineKeyVersion = 7u; // sacredfire: GS permutations re-indexed; MSAA setting
+static constexpr u32 ShaderBinaryVersion = 9u; // engine: GS ring slot fold, 1D images as 2D; MSAA setting
+static constexpr u32 ShaderMetaVersion = 8u; // engine: GS runtime info compared in full
+static constexpr u32 PipelineKeyVersion = 7u; // engine: GS permutations re-indexed; MSAA setting
 } // namespace Serialization
 
 namespace Vulkan {
@@ -122,10 +122,10 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    // sacredfire: only the vertex stage carries a fetch shader. Stages are loaded in SwStage order
+    // engine: only the vertex stage carries a fetch shader. Stages are loaded in SwStage order
     // (fragment, tessellation, vertex, geometry), and an unconditional assignment let a geometry
     // stage clear the fetch shader the vertex stage had just set: every preloaded pipeline with a
-    // geometry shader (CTR's fur) was built without vertex inputs. RefreshGraphicsKey keeps the
+    // geometry shader (the game's fur) was built without vertex inputs. RefreshGraphicsKey keeps the
     // last stage that had one; do the same here.
     if (spec.fetch_shader_data) {
         fetch_shader_data = spec.fetch_shader_data;
@@ -173,7 +173,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
         return false;
     }
 
-    // bbport: built before it is inserted: a pipeline the driver rejects while preloading throws
+    // engine: built before it is inserted: a pipeline the driver rejects while preloading throws
     // (Serialization::CorruptData) and leaves no empty entry behind.
     auto pipeline =
         std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile, *pipeline_cache,
@@ -277,7 +277,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
                                        fmt::format("{:#018x}_{}", program->info.pgm_hash, perm_idx),
                                        spv);
-    // bbport: a SPIR-V binary starts with its magic number and a 5-word header; anything else is
+    // engine: a SPIR-V binary starts with its magic number and a 5-word header; anything else is
     // a damaged file (crash or power loss while it was written) the driver must not see.
     if (spv.size() < 5 || spv[0] != 0x07230203u) {
         if (!spv.empty()) {
@@ -290,7 +290,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     // at the exact position rather than append
 
     vk::ShaderModule module{};
-    // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
+    // engine: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.
     const auto compile = [&] {
         auto [result, created] = instance.GetDevice().createShaderModule(
@@ -360,7 +360,7 @@ void PipelineCache::WarmUp() {
         std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
     }
     if (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile) {
-        // bbport: upstream closed the cache for the session here, so it was never rewritten
+        // engine: upstream closed the cache for the session here, so it was never rewritten
         // and every later session compiled every shader again (stutters on each new area).
         // Start a fresh cache for this build and GPU instead.
         LOG_WARNING(Render, "Pipeline cache isn't compatible with current system: rebuilding it");
@@ -380,7 +380,7 @@ void PipelineCache::WarmUp() {
     Storage::DataBase::Instance().ForEachBlob(
         Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
             ++num_total_pipelines;
-            // bbport: a damaged entry (cut short by a crash or a power loss, or rejected by the
+            // engine: a damaged entry (cut short by a crash or a power loss, or rejected by the
             // driver) used to stop the game at every start until the cache was deleted by hand
             // (issues #28, #38, #39). It is counted here and the cache is rebuilt below.
             try {
@@ -516,7 +516,7 @@ bool PersistentSrtInfo::Deserialize(Serialization::Archive& ar) {
     srt.Read(this, sizeof(*this));
 
     if (walker_func_size) {
-        // bbport: the size is checked before the code is registered (it becomes executable):
+        // engine: the size is checked before the code is registered (it becomes executable):
         // a cut-short file must not have bytes past its end run as the walker.
         const auto code = ar.CurrPtr();
         ar.Advance(walker_func_size);

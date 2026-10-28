@@ -23,6 +23,22 @@
 #include <sys/mman.h>
 #include <asm/prctl.h>
 #endif
+
+/* v2.0-Perf: CPU core count detection for low-end profile */
+static int detected_physical_cores = -1;
+static int get_physical_core_count(void) {
+    if (detected_physical_cores >= 0) return detected_physical_cores;
+#ifdef _WIN32
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    detected_physical_cores = (int)sysinfo.dwNumberOfProcessors;
+#else
+    detected_physical_cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (detected_physical_cores <= 0) detected_physical_cores = 4;
+#endif
+    fprintf(stderr, "[v2.0-Perf] Detected %d logical cores\n", detected_physical_cores);
+    return detected_physical_cores;
+}
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define ATTR_MAGIC UINT32_C(0x41545452)
 #define STACK_MARGIN (256*1024)
@@ -35,7 +51,7 @@ typedef struct ThreadAttr {
     uint32_t magic;
     int detached, policy, prio, inherit;
     uint64_t stack, guard, affinity;
-    uint64_t stack_addr; /* SacredFire: the lowest stack address, from scePthreadAttrGet of the calling thread */
+    uint64_t stack_addr; /* Engine: the lowest stack address, from scePthreadAttrGet of the calling thread */
     struct ThreadAttr *next;
 } ThreadAttr;
 typedef struct GuestThread {
@@ -238,7 +254,7 @@ static ABI int32_t attr_get_stack(ThreadAttr **slot,uint64_t *size) {
     if (!a || !size) return ERR(22);
     *size=a->stack; return 0;
 }
-/* SacredFire: scePthreadAttrGetstack (NpToolkit2 checks its threads' stacks): the address is
+/* Engine: scePthreadAttrGetstack (NpToolkit2 checks its threads' stacks): the address is
  * known for attributes read from the calling thread, else 0 (no stack set). */
 static ABI int32_t attr_get_stack_range(ThreadAttr **slot,void **addr,uint64_t *size) {
     ThreadAttr *a=find_attr(slot);
@@ -387,8 +403,44 @@ static void *host_start(void *p) {
     GuestThread *t=p;
 #ifdef _WIN32
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &t->win_handle, 0, FALSE, DUPLICATE_SAME_ACCESS);
-    if (strstr(t->name, "rendering") != NULL || strstr(t->name, "Audio") != NULL) {
+    
+    /* v2.0-Perf: Thread priorities to prevent micro-stutter & thread contention */
+    int cores = get_physical_core_count();
+    int is_render_or_audio = (strstr(t->name, "rendering") != NULL || strstr(t->name, "Render") != NULL ||
+                              strstr(t->name, "Audio") != NULL || strstr(t->name, "Sound") != NULL ||
+                              strstr(t->name, "Draw") != NULL || strstr(t->name, "Main") != NULL);
+    int is_job_thread = (strstr(t->name, "Job") != NULL || strstr(t->name, "Collision") != NULL || 
+                         strstr(t->name, "Delay") != NULL || strstr(t->name, "Worker") != NULL ||
+                         strstr(t->name, "Load") != NULL || strstr(t->name, "Resource") != NULL ||
+                         strstr(t->name, "Asset") != NULL || strstr(t->name, "Stream") != NULL ||
+                         strstr(t->name, "File") != NULL || strstr(t->name, "BgJob") != NULL ||
+                         strstr(t->name, "Task") != NULL || strstr(t->name, "Disc") != NULL ||
+                         strstr(t->name, "Dec") != NULL);
+    
+    if (is_render_or_audio) {
+        /* Main Render & Audio threads: HIGHEST priority - render thread always wins */
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        
+        /* Pin Render/Audio to core 0 on low-end systems to avoid contention */
+        if (cores <= 4) {
+            DWORD_PTR affinity_mask = 1ULL;  /* Core 0 only */
+            if (SetThreadAffinityMask(GetCurrentThread(), affinity_mask)) {
+                fprintf(stderr, "[v2.0-Perf] Render/Audio thread '%s' pinned to core 0 (low-end: %d cores)\n", 
+                        t->name, cores);
+            }
+        }
+    } else if (is_job_thread) {
+        /* Background Loading/Asset/Job Threads: MUST be BELOW_NORMAL so render thread always wins */
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        
+        /* Distribute job threads across remaining cores on low-end systems */
+        if (cores <= 4) {
+            static LONG job_thread_counter = 0;
+            LONG job_idx = InterlockedIncrement(&job_thread_counter) % 3;
+            DWORD_PTR affinity_mask = 1ULL << (job_idx + 1);  /* Cores 1, 2, or 3 */
+            SetThreadAffinityMask(GetCurrentThread(), affinity_mask);
+        }
+        fprintf(stderr, "[v2.0-Perf] Background/Job thread '%s' set to BELOW_NORMAL (cores: %d)\n", t->name, cores);
     } else if (t->attr.prio < 600) {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     } else {
@@ -519,8 +571,21 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     t->attr.prio=prio;
 #ifdef _WIN32
     if (t->win_handle) {
-        if (strstr(t->name, "rendering") != NULL || strstr(t->name, "Audio") != NULL) {
+        int is_render_or_audio = (strstr(t->name, "rendering") != NULL || strstr(t->name, "Render") != NULL ||
+                                  strstr(t->name, "Audio") != NULL || strstr(t->name, "Sound") != NULL ||
+                                  strstr(t->name, "Draw") != NULL || strstr(t->name, "Main") != NULL);
+        int is_job_thread = (strstr(t->name, "Job") != NULL || strstr(t->name, "Collision") != NULL || 
+                             strstr(t->name, "Delay") != NULL || strstr(t->name, "Worker") != NULL ||
+                             strstr(t->name, "Load") != NULL || strstr(t->name, "Resource") != NULL ||
+                             strstr(t->name, "Asset") != NULL || strstr(t->name, "Stream") != NULL ||
+                             strstr(t->name, "File") != NULL || strstr(t->name, "BgJob") != NULL ||
+                             strstr(t->name, "Task") != NULL || strstr(t->name, "Disc") != NULL ||
+                             strstr(t->name, "Dec") != NULL);
+        
+        if (is_render_or_audio) {
             SetThreadPriority(t->win_handle, THREAD_PRIORITY_HIGHEST);
+        } else if (is_job_thread) {
+            SetThreadPriority(t->win_handle, THREAD_PRIORITY_BELOW_NORMAL);
         } else if (prio < 600) {
             SetThreadPriority(t->win_handle, THREAD_PRIORITY_ABOVE_NORMAL);
         } else {
@@ -547,7 +612,7 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
     return 0;
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }
-/* SacredFire: the thread's name into a 32-byte buffer, and its kernel thread id. */
+/* Engine: the thread's name into a 32-byte buffer, and its kernel thread id. */
 static ABI int32_t thread_getname(GuestThread *t,char *name) {
     if (!find_thread(t)) return ERR(3);
     if (!name) return ERR(22);

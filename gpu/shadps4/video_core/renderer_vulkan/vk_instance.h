@@ -42,7 +42,7 @@ public:
     }
 
     /// Returns the current physical device
-    /// bbport: device features the temporal upscaler reports as enabled.
+    /// engine: device features the temporal upscaler reports as enabled.
     bool IsStorageImageWriteWithoutFormatEnabled() const {
         return features.shaderStorageImageWriteWithoutFormat;
     }
@@ -94,7 +94,7 @@ public:
         return present_queue;
     }
 
-    /// bbport: a compute/transfer queue beside the graphics one (null when the device has none
+    /// engine: a compute/transfer queue beside the graphics one (null when the device has none
     /// or BB_READBACK_QUEUE=0), for reading back finished GPU writes.
     static constexpr u32 NoFamily = ~0u;
     vk::Queue GetReadbackQueue() const {
@@ -103,7 +103,7 @@ public:
     u32 GetReadbackQueueFamilyIndex() const {
         return readback_family_index;
     }
-    /// bbport: memory can be exported as a dma-buf (guest memory, BbGuestMemory).
+    /// engine: memory can be exported as a dma-buf (guest memory, BbGuestMemory).
     bool IsGuestMemoryExportSupported() const {
         return guest_memory_export;
     }
@@ -157,7 +157,7 @@ public:
         return maintenance_8;
     }
 
-    /// bbport: VK_AMD_buffer_marker (GPU breadcrumbs).
+    /// engine: VK_AMD_buffer_marker (GPU breadcrumbs).
     bool IsBufferMarkerSupported() const {
         return buffer_marker;
     }
@@ -304,7 +304,7 @@ public:
     }
 
     /// Returns true when the shaderSubgroupClock feature of
-    /// bbport: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
+    /// engine: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
     /// products, linear compute derivatives, extended storage image formats).
     bool IsFsr4Int8Supported() const {
         return vk12_features.shaderFloat16 && vk12_features.shaderInt8 && features.shaderInt16 &&
@@ -313,18 +313,18 @@ public:
                features.shaderStorageImageExtendedFormats;
     }
 
-    /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
+    /// engine: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
     bool IsFsr411Supported() const {
         return IsFsr4Int8Supported() && mixed_float_dot_product;
     }
 
-    /// bbport: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
+    /// engine: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
     /// memory model, wave32 in full subgroups.
     bool IsFsr411Fp8Supported() const {
         return IsFsr411MatrixSupported() && shader_float8;
     }
 
-    /// bbport: the same passes with FP16 matrices (the FP8 variant emulated, for testing).
+    /// engine: the same passes with FP16 matrices (the FP8 variant emulated, for testing).
     bool IsFsr411MatrixSupported() const {
         return IsFsr411Supported() && cooperative_matrix && vk12_features.vulkanMemoryModel &&
                vk13_features.subgroupSizeControl && vk13_features.computeFullSubgroups &&
@@ -518,7 +518,7 @@ public:
     /// Returns the amount of memory used.
     [[nodiscard]] u64 GetDeviceMemoryUsage() const;
 
-    /// bbport: the driver's current budget of the heaps GetDeviceMemoryUsage counts
+    /// engine: the driver's current budget of the heaps GetDeviceMemoryUsage counts
     /// (VK_EXT_memory_budget: what this process can use now, other processes included).
     [[nodiscard]] u64 GetDeviceMemoryBudgetNow() const;
 
@@ -609,16 +609,16 @@ private:
     bool image_view_min_lod{};
     bool shader_clock{};
     bool compute_shader_derivatives{};
-    bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
-    bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
-    bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
+    bool mixed_float_dot_product{}; // engine: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
+    bool cooperative_matrix{};      // engine: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
+    bool shader_float8{};           // engine: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};
     std::vector<size_t> valid_heaps;
 };
 
-/// bbport memory statistics: device-local VMA memory blocks and the allocations in them (the
+/// engine memory statistics: device-local VMA memory blocks and the allocations in them (the
 /// difference is free space VMA keeps).
 void VmaDeviceUsage(u64& block_bytes, u64& allocation_bytes);
 

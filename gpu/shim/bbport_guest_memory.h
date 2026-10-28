@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: guest direct memory in GPU-visible system memory (BB_GUEST_GPU_MEMORY=1).
+// engine: guest direct memory in GPU-visible system memory (BB_GUEST_GPU_MEMORY=1).
 //
 // The runtime asks for direct memory in chunks (runtime_memory.c, CHUNK); each chunk is a
 // Vulkan allocation of cached system memory, exported as a dma-buf that the runtime maps at the

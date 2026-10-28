@@ -23,7 +23,7 @@ typedef struct _stat64 HostStat;
 #define host_stat(path,s) _stat64(path,s)
 #define host_fstat(fd,s) _fstat64(fd,s)
 #define host_lseek _lseeki64
-#define O_DIRECTORY 0x40000000 /* bbport marker, removed before _open */
+#define O_DIRECTORY 0x40000000 /* engine marker, removed before _open */
 #else
 typedef struct stat HostStat;
 #define host_stat(path,s) stat(path,s)
@@ -607,7 +607,7 @@ static void touch_for_read(const void *buffer,uint64_t size) {
         (void)*(volatile const unsigned char *)(p<(uintptr_t)buffer ? (uintptr_t)buffer : p);
 }
 static int64_t do_write(int fd,const void *buffer,uint64_t size) {
-    /* SacredFire: the first write into each opened save file is logged (plan milestone d). */
+    /* Engine: the first write into each opened save file is logged (plan milestone d). */
     { File *sf=get(fd); if (sf && !sf->save_logged && !strncmp(sf->path,"/savedata",9)) { sf->save_logged=1; printf("Runtime: save write: %s (%llu bytes)\n",sf->path,(unsigned long long)size); } }
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
@@ -823,7 +823,7 @@ static ABI int64_t sce_rmdir(const char *p) { return sce(path_op(p,1,0)); }
 static ABI int64_t posix_rmdir(const char *p) { return posix(path_op(p,1,0)); }
 static ABI int64_t sce_unlink(const char *p) { return sce(path_op(p,2,0)); }
 static ABI int64_t posix_unlink(const char *p) { return posix(path_op(p,2,0)); }
-/* SacredFire: sceKernelGetdents is getdirentries without the base pointer. */
+/* Engine: sceKernelGetdents is getdirentries without the base pointer. */
 static ABI int64_t sce_getdents_nobase(int fd,char *b,uint64_t n) { int64_t base=0; return sce(do_getdents(fd,b,n,&base)); }
 static ABI int32_t sce_check_reachability(const char *p) {
     GuestStat s; return (int32_t)sce(do_stat(p,&s));

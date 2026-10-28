@@ -38,7 +38,7 @@ static int valid_guest_ptr(const void *ptr, uint64_t bytes) {
 }
 void runtime_set_procparam(void *param) {
     process_param=param;
-    /* bbport: the game's libc heap settings (SceProcParam +0x30 or +0x38: SceLibcParam; its +0x10.. pointers to
+    /* engine: the game's libc heap settings (SceProcParam +0x30 or +0x38: SceLibcParam; its +0x10.. pointers to
      * the heap size, delayed and extended allocation flags, initial size). */
     const uint64_t *p=(const uint64_t *)param;
     if (!valid_guest_ptr(p, 0x38) || p[0]<0x38) return;
@@ -120,9 +120,6 @@ void runtime_report(void) {
     runtime_file_report();
     printf("Runtime: memory operations=%zu\n", (size_t)memory_calls);
     if (report_hook) report_hook();
-#ifdef LEGACY_GAME_HOOKS
-    /* Legacy CTR / Bloodborne runtime hooks disabled for Sengoku BASARA 4 Sumeragi. */
-#endif
 }
 void runtime_set_report_hook(void (*hook)(void)) { report_hook = hook; }
 static ABI void init_env(void) {
@@ -352,7 +349,7 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
 static const struct { const char *nid, *symbol; } import_names[]={
 #include "import_names.inc"
 };
-/* SacredFire: names generated for the eboot being run (--import-names), searched before the
+/* Engine: names generated for the eboot being run (--import-names), searched before the
  * compiled fallback table (src/import_names.inc). Both are matched on the bare NID: a NID is a hash of the symbol name. */
 static struct { char nid[12]; char *symbol; } *loaded_names;
 static size_t loaded_count;
@@ -393,7 +390,7 @@ const char *runtime_symbol(const char *nid) {
 }
 /* Same symbol name means same contract whether imported from libkernel or
  * libScePosix, so newer modules resolve by name through runtime_symbol. */
-/* SacredFire: the symbol-keyed tables model the system libraries, never libc: an import from libc or
+/* Engine: the symbol-keyed tables model the system libraries, never libc: an import from libc or
  * libSceLibcInternal binds to the linked libc.prx (link_modules.py). The few libc symbols the runtime
  * takes over (_init_env, atexit, memcpy, ...) are named explicitly in runtime_resolve. */
 static int libc_import(const char *name) {

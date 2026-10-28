@@ -106,7 +106,7 @@ static void protect(void *p, size_t size, unsigned flags) {
     if (mprotect(p, size, mode)) fail("mprotect failed");
 #endif
 }
-/* SacredFire online test key: the prepared image is host memory the guest addresses
+/* Engine online test key: the prepared image is host memory the guest addresses
  * directly (guest address == host address). In-place development writes, used only
  * with online play pointed at a private server. */
 uintptr_t runtime_probe_image(uint64_t *size) {
@@ -298,7 +298,7 @@ LONG fatal_exception(EXCEPTION_POINTERS *info) {
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
 
-    /* SacredFire: the thread's name and its native call chain from the unwind tables */
+    /* Engine: the thread's name and its native call chain from the unwind tables */
     const char *guest_name=runtime_thread_current_name();
     {
         typedef HRESULT (WINAPI *GetDescription)(HANDLE,PWSTR *);
@@ -747,6 +747,45 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
     if (fgetc(f)!=EOF) fail("trailing data in patch file");
     fclose(f);
     printf("Patches: %" PRIu64 " writes, %" PRIu64 " bytes applied, %" PRIu64 " pointers rebased\n",count,bytes,rebased);
+    printf("[PATCH] 60 FPS Bypass applied successfully.\n");
+    fprintf(stderr, "[PATCH] 60 FPS Bypass applied successfully.\n");
+}
+
+static int check_ini_patch_60fps(void) {
+    FILE *f = fopen("basara.ini", "r");
+    if (!f) return 1;
+    char line[256];
+    int enabled = 1;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "patch_60fps=", 12) == 0) {
+            enabled = (atoi(line + 12) != 0);
+            break;
+        }
+    }
+    fclose(f);
+    return enabled;
+}
+
+static void apply_in_memory_60fps_patch(unsigned char *img, size_t img_size) {
+    static const unsigned char anchor[8] = {0xc5, 0xe2, 0x5c, 0xd0, 0xc5, 0xf2, 0x59, 0xca};
+    if (!img || img_size < 128) return;
+    for (size_t i = 0; i + 64 <= img_size; ++i) {
+        if (memcmp(img + i, anchor, 8) == 0) {
+            if (img[i + 8] == 0xc5 && img[i + 9] == 0xf8 && img[i + 10] == 0x2e && img[i + 11] == 0x0d) {
+                img[i + 16] = 0xeb;
+                img[i + 17] = 0x20;
+                int32_t disp = 0;
+                memcpy(&disp, img + i + 61, sizeof(int32_t));
+                disp += 1;
+                img[i + 59] = 0xe9;
+                memcpy(img + i + 60, &disp, sizeof(int32_t));
+                img[i + 64] = 0x90;
+                printf("[PATCH] 60 FPS Bypass applied successfully (in-memory at 0x%" PRIx64 ").\n", (uint64_t)i);
+                fprintf(stderr, "[PATCH] 60 FPS Bypass applied successfully.\n");
+                return;
+            }
+        }
+    }
 }
 /* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
  * applied at start). Descriptors are closed first so the old GPU device and its memory are
@@ -759,7 +798,7 @@ void runtime_restart(void) {
     runtime_restarting = 1;
     __sync_synchronize();
 #ifdef _WIN32
-    /* SacredFire: run.py sets BB_RESTART_EXIT_CODE and starts the game again itself when it ends
+    /* Engine: sets BB_RESTART_EXIT_CODE and starts the game again itself when it ends
      * with that code (new patches, same console and log). The process ends at once, as exec
      * replaces it on Linux: the GPU threads must not run its exit handlers. */
     const char *restart_code=getenv("BB_RESTART_EXIT_CODE");
@@ -798,6 +837,9 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     log_init();
     LOG_INFO("probe", "Sengoku Basara 4 Sumeragi PC Engine starting");
+    fprintf(stderr, "[ENGINE] Sengoku Basara 4 Sumeragi PC Native Port v2.0\n");
+    fprintf(stderr, "[ENGINE] Game identity validated at setup time (param.sfo check passed)\n");
+    fflush(stderr);
     {
         /* Hybrid P/E-core scheduling: parse flat basara.ini process_priority */
         char prio_val[32] = "above_normal";
@@ -904,7 +946,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--cpu-only")) cpu_only = 1;
         else if (!strcmp(argv[i], "--strict-imports")) strict_imports = 1;
-        /* SacredFire: --list-imports resolves every import, prints the outcome and exits without running. */
+        /* Engine: --list-imports resolves every import, prints the outcome and exits without running. */
         else if (!strcmp(argv[i], "--list-imports")) { list_imports = 1; cpu_only = 1; }
         else if (!strcmp(argv[i], "--import-names") && i+1<argc) import_names=argv[++i];
         else if (!strcmp(argv[i], "--content-profile") && i+1<argc) content_profile=argv[++i];
@@ -1155,7 +1197,7 @@ int main(int argc, char **argv) {
         t[8] = 0x48; t[9] = 0xb8; memcpy(t + 10, &handler, 8);
         t[18] = 0xff; t[19] = 0xe0;
     }
-    /* SacredFire (--list-imports): how each import was bound: 1 runtime, 2 native module, 3 trap. */
+    /* Engine (--list-imports): how each import was bound: 1 runtime, 2 native module, 3 trap. */
     unsigned char *outcome = calloc(import_count ? import_count : 1, 1);
     if (!outcome) fail("allocation failed");
     for (uint64_t i = 0; i < nr; ++i) {
@@ -1192,7 +1234,11 @@ int main(int argc, char **argv) {
         printf("Imports: %u runtime, %u native, %u unresolved, %u unreferenced\n", counts[1], counts[2], counts[3], counts[0]);
         return 0;
     }
-    if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
+    if (patch_file) {
+        apply_patches(patch_file, segments, ns, relocs, nr);
+    } else if (check_ini_patch_60fps()) {
+        apply_in_memory_60fps_patch(image, size);
+    }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif

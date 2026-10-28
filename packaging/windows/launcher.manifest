@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="ctr.nitrofueled.pc.launcher" version="1.0.0.0"/>
-  <description>CTR Nitro-Fueled PC launcher</description>
+  <assemblyIdentity type="win32" name="basara4.sumeragi.pc.launcher" version="2.0.0.0"/>
+  <description>Sengoku Basara 4 Sumeragi PC Launcher</description>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>

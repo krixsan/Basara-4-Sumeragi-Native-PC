@@ -194,6 +194,7 @@ private:
     void DemuxerThread(std::stop_token stop);
     void VideoDecoderThread(std::stop_token stop);
     void AudioDecoderThread(std::stop_token stop);
+    void WatchdogThread(std::stop_token stop);
 
     bool HasRunningThreads() const;
 
@@ -219,6 +220,8 @@ private:
     std::atomic_bool m_is_looping = false;
     std::atomic_bool m_is_paused = false;
     std::atomic_bool m_is_eof = false;
+    std::atomic<u64> m_frames_delivered{0};
+    std::atomic<u64> m_video_frames_delivered{0};
 
     std::unique_ptr<IDataStreamer> m_up_data_streamer;
 
@@ -249,6 +252,7 @@ private:
     Kernel::Thread m_demuxer_thread{};
     Kernel::Thread m_video_decoder_thread{};
     Kernel::Thread m_audio_decoder_thread{};
+    Kernel::Thread m_watchdog_thread{};
 
     AVFormatContextPtr m_avformat_context{nullptr, &ReleaseAVFormatContext};
     AVCodecContextPtr m_video_codec_context{nullptr, &ReleaseAVCodecContext};
@@ -261,6 +265,10 @@ private:
     std::optional<std::chrono::high_resolution_clock::time_point> m_start_time{};
     std::chrono::high_resolution_clock::time_point m_pause_time{};
     std::chrono::high_resolution_clock::duration m_pause_duration{};
+
+    // Timestamp rebase: align PTS to wall clock after seek
+    std::optional<u64> m_video_ts_rebase{};
+    std::optional<u64> m_audio_ts_rebase{};
 };
 
 } // namespace Libraries::AvPlayer

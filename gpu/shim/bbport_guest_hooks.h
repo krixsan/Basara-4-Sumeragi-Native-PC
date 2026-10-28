@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: hooks in the game's code that write GPU memory (BB_GUEST_IN_PLACE). Where the game
+// engine: hooks in the game's code that write GPU memory (BB_GUEST_IN_PLACE). Where the game
 // copies resource data into memory the GPU uses, the GPU side is told once the data is there, as a
 // driver is told of a resource update; the write needs no page protection to be seen. Each site
 // is checked byte for byte against the expected code (another game version: not installed).

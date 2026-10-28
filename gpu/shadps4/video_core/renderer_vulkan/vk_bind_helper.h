@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: a second thread for the GPU command thread's per-draw work (docs/parallel_gpu.md,
+// engine: a second thread for the GPU command thread's per-draw work (docs/parallel_gpu.md,
 // "Texture binding on a helper thread"). The GPU thread forks one task per draw and joins it
 // before anything that depends on the task's results; the helper spins for the next task
 // while draws flow and sleeps after a short idle period.
@@ -39,7 +39,7 @@ public:
     }
 
     [[nodiscard]] bool Available() const noexcept {
-        return running; // bbport: not thread.joinable(), two system calls on Windows
+        return running; // engine: not thread.joinable(), two system calls on Windows
     }
 
     /// True on the helper thread (its callees must not join it).

@@ -110,7 +110,7 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
             result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &retry_ci, &unsafe_buffer,
                                      &allocation, out_alloc_info);
         }
-        // bbport: a stream buffer is an upload ring. If the device-local host-visible heap is
+        // engine: a stream buffer is an upload ring. If the device-local host-visible heap is
         // exhausted (small BAR, other processes), fall back to system RAM instead of aborting on
         // map load. The ring is host-written and GPU-read, so a host-visible allocation is valid.
         if (result != VK_SUCCESS && mem_type == MemoryType::Stream) {
@@ -198,7 +198,7 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
         .usage = AllFlags,
         .sharingMode = vk::SharingMode::eExclusive,
     };
-    // bbport: arenas are also read by the readback queue (BufferCache::DownloadMemory).
+    // engine: arenas are also read by the readback queue (BufferCache::DownloadMemory).
     const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
                                          instance.GetReadbackQueueFamilyIndex()};
     if (mem_type == MemoryType::Sparse && instance.GetReadbackQueue()) {
