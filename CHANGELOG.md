@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-29
+
+### Fixed
+- **UI Overlap & Slider Bug**: Fixed the RCAS Sharpness slider jumping vertically when dragged. Realigned all Y-coordinates for a clean, premium layout.
+- **Performance Mode Logic**: Performance Mode now correctly disables RCAS sharpening (via `BB_RCAS=0`) to ensure maximum FPS on low-end hardware.
+- **Fullscreen Resolution**: Verified Exclusive Fullscreen correctly overrides the monitor's native resolution with the user's selected `output_res`.
+
+---
+
 ## [2.0.0] - 2026-10-28
 
 ### Added
