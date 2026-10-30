@@ -143,6 +143,7 @@ private:
     u32 frame_index = 0;
     bool needs_recreation = true;
     bool zero_extent = false; ///< bbport: the surface was 0x0 (minimised) at the last Create
+    int active_fps_limit = -1; ///< bbport: fps_limit the current present mode was chosen for
     bool needs_hdr = false;    // The game requested HDR swapchain
     bool supports_hdr = false; // SC supports HDR output
 };

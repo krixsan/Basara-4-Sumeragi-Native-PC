@@ -87,6 +87,8 @@ def read_ini():
         "skip_intro": "0",
         "show_fps": "1",
         "performance_mode": "0",
+        "safe_mode": "0",
+        "async_pipelines": "1",
         "process_priority": "above_normal",
         "telemetry_upload": "ask",
         "telemetry_endpoint": "https://api.github.com/repos/krixsan/Basara-4-Sumeragi-Native-PC/telemetry",
@@ -1147,10 +1149,20 @@ class BasaraLauncher(tk.Tk):
             pass
 
     def apply_window_icon(self):
-        icon_path = os.path.join("packaging", "windows", "icons", "basara4.ico")
-        if os.path.isfile(icon_path):
+        # Try game's extracted PNG icon first
+        icon_png = os.path.join("extracted_game", "app0", "sce_sys", "icon0.png")
+        if os.path.isfile(icon_png):
             try:
-                self.iconbitmap(icon_path)
+                img = Image.open(icon_png).convert("RGBA")
+                self.iconphoto(True, ImageTk.PhotoImage(img))
+                return
+            except Exception:
+                pass
+        # Fallback to .ico file
+        icon_ico = os.path.join("packaging", "windows", "icons", "basara4.ico")
+        if os.path.isfile(icon_ico):
+            try:
+                self.iconbitmap(icon_ico)
             except Exception:
                 pass
 
@@ -1170,6 +1182,8 @@ class BasaraLauncher(tk.Tk):
         self.skip_intro_val = (ini.get("skip_intro", "0") == "1")
         self.show_fps_val = (ini.get("show_fps", "1") == "1")
         self.perf_mode_val = (ini.get("performance_mode", "0") == "1")
+        self.safe_mode_val = (ini.get("safe_mode", "0") == "1")
+        self.async_pipelines_val = ini.get("async_pipelines", "1")
         self.scale_val = ini.get("render_scale", "1.0")
         if self.scale_val not in ("1.0", "1.5", "2.0"):
             try:
@@ -1216,6 +1230,8 @@ class BasaraLauncher(tk.Tk):
             "skip_intro": "1" if self.skip_intro_val else "0",
             "show_fps": "1" if self.show_fps_val else "0",
             "performance_mode": "1" if self.perf_mode_val else "0",
+            "safe_mode": "1" if self.safe_mode_val else "0",
+            "async_pipelines": self.async_pipelines_val,
             "process_priority": self.prio_val,
             "telemetry_upload": self.telem_val,
             "first_run_done": self.first_run_done,
@@ -1347,6 +1363,8 @@ class BasaraLauncher(tk.Tk):
         self.btn_wiz_hov = self._create_pill_texture(120, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
         self.btn_reb_norm = self._create_pill_texture(120, 26, (36, 44, 53, 225), (218, 165, 32, 200), radius=6, width=1)
         self.btn_reb_hov = self._create_pill_texture(120, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
+        self.btn_logs_norm = self._create_pill_texture(80, 26, (36, 44, 53, 225), (218, 165, 32, 200), radius=6, width=1)
+        self.btn_logs_hov = self._create_pill_texture(80, 26, (50, 62, 75, 240), (255, 215, 0, 255), radius=6, width=1)
 
         # 4. Modern Toggle Switches (40 x 20)
         self.switch_on = self._create_switch_texture(True)
@@ -1872,6 +1890,26 @@ class BasaraLauncher(tk.Tk):
         self.canvas.tag_bind(tag_reb, "<Leave>", self._on_reb_leave)
         self.canvas.tag_bind(tag_reb, "<Button-1>", lambda e: self.on_manual_rebuild())
 
+        # Safe Mode Toggle (switch + label)
+        self.sw_safe_img = self.canvas.create_image(420, 527, image=self.switch_off, anchor="nw")
+        self.safe_txt = self.canvas.create_text(470, 537, text="🛡️ Safe Mode", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD, anchor="w")
+        tag_safe = "toggle_safe_mode"
+        for item in (self.sw_safe_img, self.safe_txt):
+            self.canvas.itemconfig(item, tags=(tag_safe,))
+        self.canvas.tag_bind(tag_safe, "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
+        self.canvas.tag_bind(tag_safe, "<Leave>", lambda e: self.canvas.config(cursor="arrow"))
+        self.canvas.tag_bind(tag_safe, "<Button-1>", lambda e: self._toggle_setting("safe_mode"))
+
+        # Logs Button (80 x 26)
+        self.logs_img = self.canvas.create_image(580, 524, image=self.btn_logs_norm, anchor="nw")
+        self.logs_txt = self.canvas.create_text(580 + 40, 524 + 13, text="📁 Logs", font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        tag_logs = "btn_open_logs"
+        for item in (self.logs_img, self.logs_txt):
+            self.canvas.itemconfig(item, tags=(tag_logs,))
+        self.canvas.tag_bind(tag_logs, "<Enter>", self._on_logs_enter)
+        self.canvas.tag_bind(tag_logs, "<Leave>", self._on_logs_leave)
+        self.canvas.tag_bind(tag_logs, "<Button-1>", lambda e: self.open_logs_folder())
+
         # =====================================================================
         # 10. BOTTOM ACTION BAR (Status, Updates & Action Button)
         # =====================================================================
@@ -1912,6 +1950,7 @@ class BasaraLauncher(tk.Tk):
         self.bind_tooltip("slider_sharp", "AMD FidelityFX RCAS Sharpness filter strength (0-100%). Default: 75%.")
         self.bind_tooltip("toggle_fsr", "Upscales lower resolutions and sharpens textures for better performance.")
         self.bind_tooltip("toggle_perf_mode", "Forces 720p resolution and disables RCAS sharpening. Ideal for low-end PCs (GTX 1050).")
+        self.bind_tooltip("toggle_safe_mode", "Enable this if the game crashes on startup or during combat. Disables all advanced graphics for maximum stability.")
         self.bind_tooltip("tooltip_telem", "Sends anonymous crash reports. No personal data is collected.")
 
         # Initial GUI Refresh
@@ -1979,6 +2018,9 @@ class BasaraLauncher(tk.Tk):
         self.canvas.itemconfig(self.sw3_img, image=self.switch_on if self.skip_intro_val else self.switch_off)
         self.canvas.itemconfig(self.sw4_img, image=self.switch_on if self.show_fps_val else self.switch_off)
         self.canvas.itemconfig(self.sw5_img, image=self.switch_on if self.perf_mode_val else self.switch_off)
+        if hasattr(self, "sw_safe_img"):
+            self.canvas.itemconfig(self.sw_safe_img, image=self.switch_on if self.safe_mode_val else self.switch_off)
+            self.canvas.itemconfig(self.safe_txt, text="🛡️ Safe Mode 🔒" if self.safe_mode_val else "🛡️ Safe Mode")
 
         act_prio, inact_prio, _ = self.pills_prio
         for img_id, txt_id, val in self.prio_items:
@@ -2036,6 +2078,9 @@ class BasaraLauncher(tk.Tk):
             self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
     def _select_fps(self, val):
+        if self.safe_mode_val:
+            self._show_safe_mode_warning()
+            return
         self.fps_val = val
         self.refresh_controls()
         self.sync_ini()
@@ -2057,6 +2102,9 @@ class BasaraLauncher(tk.Tk):
             self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
     def _select_aniso(self, val):
+        if self.safe_mode_val:
+            self._show_safe_mode_warning()
+            return
         self.aniso_val = val
         self.refresh_controls()
         self.sync_ini()
@@ -2127,6 +2175,14 @@ class BasaraLauncher(tk.Tk):
         self.canvas.config(cursor="arrow")
         self.canvas.itemconfig(self.reb_img, image=self.btn_reb_norm)
 
+    def _on_logs_enter(self, e):
+        self.canvas.config(cursor="hand2")
+        self.canvas.itemconfig(self.logs_img, image=self.btn_logs_hov)
+
+    def _on_logs_leave(self, e):
+        self.canvas.config(cursor="arrow")
+        self.canvas.itemconfig(self.logs_img, image=self.btn_logs_norm)
+
     def _on_scale_enter(self, idx):
         img_id, txt_id, val = self.scale_items[idx]
         if self.fsr_val and val in ("1.5", "2.0"):
@@ -2150,6 +2206,9 @@ class BasaraLauncher(tk.Tk):
                 self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
     def _select_scale(self, val):
+        if self.safe_mode_val:
+            self._show_safe_mode_warning()
+            return
         self.scale_val = val
         if val in ("1.5", "2.0"):
             self.fsr_val = False
@@ -2203,12 +2262,37 @@ class BasaraLauncher(tk.Tk):
             messagebox.showinfo("v2.0 Changelog", "CHANGELOG.md not found in the game directory.")
 
     def check_for_updates(self):
-        messagebox.showinfo(
-            "Check for Updates",
-            "Auto-Updater: Checking GitHub for new releases...\n\n"
-            "Visit: https://github.com/krixsan/Basara-4-Sumeragi-Native-PC\n"
-            "Current Version: v2.0"
-        )
+        import urllib.request
+        import json
+
+        try:
+            # Get current local version
+            local_ver = "v2.0.0"
+            if os.path.isfile("VERSION.txt"):
+                with open("VERSION.txt", "r") as f:
+                    local_ver = f.read().strip()
+
+            # Fetch latest from GitHub API
+            url = "https://api.github.com/repos/krixsan/Basara-4-Sumeragi-Native-PC/releases/latest"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Basara4-Launcher'})
+
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                latest_ver = data.get("tag_name", "")
+                html_url = data.get("html_url", "https://github.com/krixsan/Basara-4-Sumeragi-Native-PC/releases")
+
+                if latest_ver and latest_ver != local_ver:
+                    ans = messagebox.askyesno(
+                        "Update Available!",
+                        f"A new version is available!\n\nLocal: {local_ver}\nLatest: {latest_ver}\n\nWould you like to download it now?"
+                    )
+                    if ans:
+                        webbrowser.open(html_url)
+                else:
+                    messagebox.showinfo("Up to Date", f"You are running the latest version ({local_ver}).")
+
+        except Exception as e:
+            messagebox.showerror("Update Error", f"Could not check for updates. Check your internet connection.\n\nError: {e}")
 
     def on_manual_rebuild(self):
         confirm = messagebox.askyesno(
@@ -2249,6 +2333,39 @@ class BasaraLauncher(tk.Tk):
         self.evaluate_system_readiness()
         self.launch_game()
 
+    def open_logs_folder(self):
+        log_dir = os.path.abspath(os.path.join("user", "logs"))
+        os.makedirs(log_dir, exist_ok=True)
+        try:
+            os.startfile(log_dir)
+        except Exception as err:
+            messagebox.showerror("Logs", f"Could not open log folder:\n\n{err}")
+
+    def _show_safe_mode_warning(self):
+        messagebox.showwarning(
+            "Safe Mode Active",
+            "Cannot change graphics settings while Safe Mode is active.\n\n"
+            "Safe Mode forces the game to 60 FPS, 1.0x Render Scale, 4x AF, and disables FSR to prevent crashes.\n\n"
+            "Please turn off Safe Mode to customize your graphics."
+        )
+
+    def show_crash_dialog(self, exit_code, log_file_path):
+        try:
+            with open(log_file_path, "r", encoding="utf-8", errors="replace") as f:
+                last_15_lines = "".join(f.readlines()[-15:]).strip()
+        except Exception:
+            last_15_lines = "(log file not available)"
+        if not last_15_lines:
+            last_15_lines = "(no log output)"
+        self.deiconify()
+        messagebox.showerror(
+            "Game Crashed",
+            f"The game process exited unexpectedly (Code: {exit_code}).\n\n"
+            "This is usually caused by missing game files, low RAM, or incompatible GPU drivers.\n\n"
+            f"Last log output:\n{last_15_lines}\n\n"
+            "Try enabling 'Safe Mode' or check your Vulkan drivers."
+        )
+
     def open_gamepad_mapper(self):
         mapper_exe = "basara4-pad-mapper.exe"
         if os.path.isfile(mapper_exe):
@@ -2258,6 +2375,9 @@ class BasaraLauncher(tk.Tk):
             messagebox.showinfo("Controller Mapping", "Standard XInput (Xbox/PlayStation) pads work natively!\nIf using a generic DInput controller, basara4-pad-mapper.exe will calibrate it.")
 
     def _toggle_setting(self, name):
+        if getattr(self, "safe_mode_val", False) and name in ("fullscreen", "fsr", "perf_mode"):
+            self._show_safe_mode_warning()
+            return
         if name == "fullscreen":
             self.fullscreen_val = not self.fullscreen_val
         elif name == "fsr":
@@ -2273,6 +2393,15 @@ class BasaraLauncher(tk.Tk):
             self.show_fps_val = not self.show_fps_val
         elif name == "perf_mode":
             self.perf_mode_val = not self.perf_mode_val
+        elif name == "safe_mode":
+            self.safe_mode_val = not self.safe_mode_val
+            if self.safe_mode_val:
+                self.fullscreen_val = False
+                self.scale_val = "1.0"
+                self.fps_val = "60"
+                self.aniso_val = "4"
+                self.async_pipelines_val = "0"
+                self.fsr_val = False
         self.refresh_controls()
         self.sync_ini()
 
@@ -2554,7 +2683,9 @@ class BasaraLauncher(tk.Tk):
             if HAS_AUTO_BUILDER and auto_builder and eboot_found:
                 if self.fps_val != "60" or ini_patch_60:
                     try:
-                        auto_builder.apply_fps_patches(app0, out_dir, unlimited_fps=True)
+                        auto_builder.apply_fps_patches(
+                            app0, out_dir, unlimited_fps=ini_patch_60
+                        )
                     except Exception as e:
                         print(f"Warning: could not apply FPS patches: {e}")
                 else:
@@ -2604,8 +2735,15 @@ class BasaraLauncher(tk.Tk):
             # Seamless minimize/hide on main thread
             self.after(0, self.withdraw)
 
-            proc = subprocess.Popen(cmd, cwd=os.getcwd(), env=env)
-            proc.wait()
+            os.makedirs(os.path.join("user", "logs"), exist_ok=True)
+            log_file_path = os.path.join("user", "logs", "last_run.log")
+            with open(log_file_path, "w", encoding="utf-8", errors="replace") as log_file:
+                proc = subprocess.Popen(cmd, cwd=os.getcwd(), env=env, stdout=log_file, stderr=subprocess.STDOUT)
+                proc.wait()
+
+            if proc.returncode != 0:
+                exit_code = proc.returncode
+                self.after(0, lambda: self.show_crash_dialog(exit_code, log_file_path))
 
         except Exception as err:
             print(f"Game runtime error: {err}")

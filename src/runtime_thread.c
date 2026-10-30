@@ -39,6 +39,15 @@ static int get_physical_core_count(void) {
     fprintf(stderr, "[v2.0-Perf] Detected %d logical cores\n", detected_physical_cores);
     return detected_physical_cores;
 }
+#ifdef _WIN32
+/* v2.0.2: restricted Windows sessions can refuse HIGHEST; degrade instead of failing. */
+static void set_thread_priority_highest(HANDLE thread) {
+    if (!SetThreadPriority(thread, THREAD_PRIORITY_HIGHEST)) {
+        SetThreadPriority(thread, THREAD_PRIORITY_NORMAL);
+        fprintf(stderr, "[v2.0.2] HIGHEST thread priority denied; falling back to NORMAL\n");
+    }
+}
+#endif
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define ATTR_MAGIC UINT32_C(0x41545452)
 #define STACK_MARGIN (256*1024)
@@ -171,7 +180,7 @@ void runtime_thread_attach_main(void) {
     snprintf(t->name,sizeof(t->name),"main");
 #ifdef _WIN32
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &t->win_handle, 0, FALSE, DUPLICATE_SAME_ACCESS);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    set_thread_priority_highest(GetCurrentThread());
     compat_commit_current_stack();
     static int watchdog_started = 0;
     if (!watchdog_started) {
@@ -419,7 +428,7 @@ static void *host_start(void *p) {
     
     if (is_render_or_audio) {
         /* Main Render & Audio threads: HIGHEST priority - render thread always wins */
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        set_thread_priority_highest(GetCurrentThread());
         
         /* Pin Render/Audio to core 0 on low-end systems to avoid contention */
         if (cores <= 4) {
@@ -583,7 +592,7 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
                              strstr(t->name, "Dec") != NULL);
         
         if (is_render_or_audio) {
-            SetThreadPriority(t->win_handle, THREAD_PRIORITY_HIGHEST);
+            set_thread_priority_highest(t->win_handle);
         } else if (is_job_thread) {
             SetThreadPriority(t->win_handle, THREAD_PRIORITY_BELOW_NORMAL);
         } else if (prio < 600) {

@@ -194,8 +194,34 @@ static ABI void guard_release(uint64_t *guard) {
 static ABI void guard_abort(uint64_t *guard) {
     atomic_fetch_and_explicit((_Atomic uint64_t *)guard, UINT64_C(0xffffffff), memory_order_release);
 }
+#ifdef _WIN32
+extern unsigned long __stdcall GetCurrentThreadId(void);
+#endif
+
 static ABI __attribute__((noreturn)) void stack_fail(void) {
-    fputs("STOP: guest stack protector detected corruption\n", stderr);
+    uint64_t sites[3] = {0, 0, 0};
+    runtime_guest_call_sites(sites);
+    const char *tname = runtime_thread_current_name();
+    uint32_t tid = 0;
+#ifdef _WIN32
+    tid = (uint32_t)GetCurrentThreadId();
+#endif
+    fprintf(stderr, "\n=======================================================\n");
+    fprintf(stderr, "STOP: guest stack protector detected corruption!\n");
+    fprintf(stderr, "  Thread: '%s' (TID %u)\n", tname ? tname : "unknown", (unsigned)tid);
+    fprintf(stderr, "  Guest call chain: +%#llx < +%#llx < +%#llx\n",
+            (unsigned long long)sites[0],
+            (unsigned long long)sites[1],
+            (unsigned long long)sites[2]);
+    const uintptr_t *sp = (const uintptr_t *)__builtin_frame_address(0);
+    if (!sites[0] && sp) {
+        fprintf(stderr, "  Stack preview around %p:\n", (const void *)sp);
+        for (int i = 0; i < 8; ++i) {
+            fprintf(stderr, "    [%+d] = 0x%016llx\n", i * 8, (unsigned long long)sp[i]);
+        }
+    }
+    fprintf(stderr, "=======================================================\n\n");
+    fflush(stderr);
     exit(22);
 }
 /* Character swaps and stage teardown can leave a model pointer null when a guest allocation or

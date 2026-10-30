@@ -241,9 +241,31 @@ def auto_prepare(game_path, out_path, source_hint_dir=None, status_callback=None
     return True
 
 
+FPS_PATCH_CRITICAL = (
+    "[PATCH] CRITICAL: 60 FPS bypass patch FAILED to apply. "
+    "The memory pattern was not found."
+)
+
+
+def _fps_patch_critical(reason):
+    """Loud, unmissable diagnostic for a failed 60 FPS bypass."""
+    red = "\033[91m\033[1m"
+    reset = "\033[0m"
+    banner = "=" * 78
+    text = (f"{red}{banner}\n{FPS_PATCH_CRITICAL}\n"
+            f"[PATCH] Reason: {reason}\n{banner}{reset}")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            print(text, file=stream, flush=True)
+        except Exception:
+            pass
+
+
 def apply_fps_patches(game_path, out_path, unlimited_fps=True):
     """
     Generates out/patches.bin to remove the internal 60 FPS limiter in Capcom MT Framework.
+    The patch is applied by the loader at runtime (BBPATCH2), so verification reads the
+    generated patch stream back instead of modifying the original eboot.bin.
     """
     import struct
     game_dir = Path(game_path).resolve()
@@ -261,6 +283,7 @@ def apply_fps_patches(game_path, out_path, unlimited_fps=True):
 
     eboot = game_dir / 'eboot.bin'
     if not eboot.is_file():
+        _fps_patch_critical(f"eboot.bin not found at {eboot}")
         return []
 
     try:
@@ -300,6 +323,9 @@ def apply_fps_patches(game_path, out_path, unlimited_fps=True):
             at = image.find(anchor, at + 1)
 
         if len(found) != 1:
+            _fps_patch_critical(
+                f"expected exactly 1 limiter signature, found {len(found)}"
+            )
             return []
 
         base = found[0]
@@ -315,9 +341,49 @@ def apply_fps_patches(game_path, out_path, unlimited_fps=True):
         for offset, patch_data in writes:
             blob += struct.pack('<QQ', offset, len(patch_data)) + patch_data
         patches_file.write_bytes(blob)
+
+        # Verification 1: read the generated patch stream back byte-for-byte.
+        written = patches_file.read_bytes()
+        if written != blob:
+            _fps_patch_critical("patches.bin read-back mismatch")
+            return []
+
+        # Verification 2: parse it as the loader will, then apply it to an image copy.
+        magic, _, count = struct.unpack_from('<8sQQ', written, 0)
+        if magic != b'BBPATCH2' or count != len(writes):
+            _fps_patch_critical("patches.bin header/count mismatch")
+            return []
+        pos = struct.calcsize('<8sQQ')
+        for offset, patch_data in writes:
+            p_offset, p_len = struct.unpack_from('<QQ', written, pos)
+            pos += struct.calcsize('<QQ')
+            p_data = written[pos:pos + p_len]
+            pos += p_len
+            if p_offset != offset or p_data != patch_data:
+                _fps_patch_critical(
+                    f"patch entry mismatch at offset 0x{offset:x}"
+                )
+                return []
+        if pos != len(written):
+            _fps_patch_critical("patches.bin has trailing data")
+            return []
+
+        patched_image = bytearray(image)
+        for offset, patch_data in writes:
+            if offset < 0 or offset + len(patch_data) > len(patched_image):
+                _fps_patch_critical(f"patch offset out of range: 0x{offset:x}")
+                return []
+            patched_image[offset:offset + len(patch_data)] = patch_data
+        for offset, patch_data in writes:
+            if bytes(patched_image[offset:offset + len(patch_data)]) != patch_data:
+                _fps_patch_critical(f"read-back mismatch at offset 0x{offset:x}")
+                return []
+
+        print(f"[PATCH] 60 FPS bypass verified: {len(writes)} writes, "
+              f"{sum(len(d) for _, d in writes)} bytes at 0x{base:x}.")
         return writes
     except Exception as e:
-        print(f"Notice: could not build patches.bin: {e}")
+        _fps_patch_critical(f"patch build exception: {e}")
         return []
 
 

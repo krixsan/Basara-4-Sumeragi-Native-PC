@@ -237,6 +237,7 @@ private:
     bool scaled_session = false;
     u32 ui_width = 0, ui_height = 0;
     u32 render_width = 0, render_height = 0;
+    u32 logged_render_width = 0, logged_render_height = 0;
     vk::Format ui_format = vk::Format::eUndefined;
     vk::Format ui_depth_format = vk::Format::eUndefined;
     /// Views of the port's images in the formats/swizzles the game's views use.

@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.1] - 2026-10-29
+## [v2.0.2] - 2026-10-30
+
+### Added
+- **Safe Mode**: One-click stability profile that forces borderless windowed output, native render scale, 60 FPS, 4x anisotropic filtering, and disables FSR and async pipelines.
+- **Crash Reporting**: The launcher now captures game stdout/stderr to `user/logs/last_run.log` and shows the last 15 log lines when the process exits with an error.
+- **Logs Button**: Opens the log folder directly from the launcher toolbar.
 
 ### Fixed
-- **UI Overlap & Slider Bug**: Fixed the RCAS Sharpness slider jumping vertically when dragged. Realigned all Y-coordinates for a clean, premium layout.
-- **Performance Mode Logic**: Performance Mode now correctly disables RCAS sharpening (via `BB_RCAS=0`) to ensure maximum FPS on low-end hardware.
-- **Fullscreen Resolution**: Verified Exclusive Fullscreen correctly overrides the monitor's native resolution with the user's selected `output_res`.
+- **Vulkan Present Mode Fallback**: Falls back to V-Sync when the GPU driver rejects Immediate or Mailbox present modes.
+- **Thread Priority Fallback**: Render and audio threads fall back to normal priority when Windows refuses the highest priority request.
 
 ---
 

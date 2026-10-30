@@ -57,6 +57,7 @@ uintptr_t runtime_thread_resolve(const char *name);
 void runtime_thread_report(void);
 /* Non-mutating guest-thread test for the fault handler (does not create a thread record). */
 int runtime_thread_is_guest(void);
+const char *runtime_thread_current_name(void);
 void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);

@@ -84,7 +84,39 @@ void Swapchain::Create(u32 width_, u32 height_) {
         .oldSwapchain = old_swapchain,
     };
 
-    auto [swapchain_result, chain] = instance.GetDevice().createSwapchainKHR(swapchain_info);
+    const auto try_create = [&](vk::PresentModeKHR mode) {
+        auto info = swapchain_info;
+        info.presentMode = mode;
+        return instance.GetDevice().createSwapchainKHR(info);
+    };
+
+    auto [swapchain_result, chain] = try_create(present_mode);
+    if (swapchain_result != vk::Result::eSuccess &&
+        present_mode == vk::PresentModeKHR::eImmediate) {
+        LOG_WARNING(Render_Vulkan,
+                    "[VULKAN] WARNING: eImmediate rejected by driver, trying eMailbox.");
+        std::fprintf(stderr,
+                     "[VULKAN] WARNING: eImmediate rejected by driver, trying eMailbox.\n");
+        auto [mailbox_result, mailbox_chain] = try_create(vk::PresentModeKHR::eMailbox);
+        swapchain_result = mailbox_result;
+        chain = mailbox_chain;
+        if (swapchain_result == vk::Result::eSuccess) {
+            present_mode = vk::PresentModeKHR::eMailbox;
+        }
+    }
+    if (swapchain_result != vk::Result::eSuccess &&
+        present_mode != vk::PresentModeKHR::eFifo) {
+        LOG_WARNING(Render_Vulkan,
+                    "[VULKAN] WARNING: eMailbox/eImmediate not supported. V-Sync will lock FPS "
+                    "to 60Hz.");
+        std::fprintf(stderr,
+                     "[VULKAN] WARNING: eMailbox/eImmediate not supported. V-Sync will lock FPS "
+                     "to 60Hz.\n");
+        present_mode = vk::PresentModeKHR::eFifo;
+        auto [retry_result, retry_chain] = try_create(present_mode);
+        swapchain_result = retry_result;
+        chain = retry_chain;
+    }
     ASSERT_MSG(swapchain_result == vk::Result::eSuccess, "Failed to create swapchain: {}",
                vk::to_string(swapchain_result));
     swapchain = chain;
@@ -99,6 +131,9 @@ void Swapchain::Create(u32 width_, u32 height_) {
 void Swapchain::Recreate(u32 width_, u32 height_) {
     LOG_DEBUG(Render_Vulkan, "Recreate the swapchain: width={} height={} HDR={}", width_, height_,
               needs_hdr);
+    if (BbSettings::Get().fps_limit.load(std::memory_order_relaxed) != active_fps_limit) {
+        FindPresentMode();
+    }
     Create(width_, height_);
 }
 
@@ -120,6 +155,13 @@ void Swapchain::SetHDR(bool hdr) {
 }
 
 bool Swapchain::AcquireNextImage() {
+    // The in-game Performance menu can change the limit while the game is running. Recreate so
+    // the present mode follows it instead of keeping the FIFO chosen at startup.
+    if (BbSettings::Get().fps_limit.load(std::memory_order_relaxed) != active_fps_limit) {
+        needs_recreation = true;
+        return false;
+    }
+
     vk::Device device = instance.GetDevice();
     vk::Result result =
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
@@ -216,44 +258,74 @@ void Swapchain::FindPresentFormat() {
 void Swapchain::FindPresentMode() {
     const auto [modes_result, modes] =
         instance.GetPhysicalDevice().getSurfacePresentModesKHR(surface);
-    if (modes_result != vk::Result::eSuccess) {
-        LOG_ERROR(Render, "Failed to query available present modes, falling back to Fifo as "
-                          "guaranteed supported option.");
-        present_mode = vk::PresentModeKHR::eFifo;
-        return;
-    }
-
     const int limit = BbSettings::Get().fps_limit.load(std::memory_order_relaxed);
+    active_fps_limit = limit;
     const auto has_mode = [&](vk::PresentModeKHR m) {
         return std::ranges::find(modes, m) != modes.cend();
     };
+    const auto mode_name = [](vk::PresentModeKHR m) {
+        switch (m) {
+        case vk::PresentModeKHR::eImmediate:
+            return "IMMEDIATE";
+        case vk::PresentModeKHR::eMailbox:
+            return "MAILBOX";
+        case vk::PresentModeKHR::eFifo:
+            return "FIFO";
+        default:
+            return "OTHER";
+        }
+    };
 
-    if (limit == 0) {
-        // Max FPS / Unlimited: Prioritize Immediate (or Mailbox if Immediate unavailable) to unlock FPS
+    if (modes_result != vk::Result::eSuccess) {
+        LOG_ERROR(Render, "Failed to query available present modes.");
+        if (limit > 60) {
+            present_mode = vk::PresentModeKHR::eImmediate;
+            LOG_WARNING(Render_Vulkan,
+                        "[VULKAN] eImmediate not advertised; forcing eImmediate for FPS unlock.");
+        } else {
+            present_mode = vk::PresentModeKHR::eFifo;
+        }
+        LOG_INFO(Render_Vulkan, "[VULKAN] Requested FPS: {}. Using Present Mode: {}.", limit,
+                 mode_name(present_mode));
+        std::fprintf(stderr, "[VULKAN] Requested FPS: %d. Using Present Mode: %s.\n", limit,
+                     mode_name(present_mode));
+        return;
+    }
+
+    if (limit > 60) {
+        // >60 FPS must not use FIFO. Force Immediate even when the driver did not advertise it;
+        // Create() retries Mailbox/FIFO only if the driver hard-rejects it.
+        present_mode = vk::PresentModeKHR::eImmediate;
+        if (!has_mode(vk::PresentModeKHR::eImmediate)) {
+            LOG_WARNING(Render_Vulkan,
+                        "[VULKAN] eImmediate not advertised; forcing eImmediate for FPS unlock.");
+            std::fprintf(stderr,
+                         "[VULKAN] eImmediate not advertised; forcing eImmediate for FPS unlock.\n");
+        }
+    } else if (limit == 0) {
+        // Max FPS / Unlimited: Immediate first, Mailbox second.
         if (has_mode(vk::PresentModeKHR::eImmediate)) {
             present_mode = vk::PresentModeKHR::eImmediate;
         } else if (has_mode(vk::PresentModeKHR::eMailbox)) {
             present_mode = vk::PresentModeKHR::eMailbox;
         } else {
             present_mode = vk::PresentModeKHR::eFifo;
+            LOG_WARNING(Render_Vulkan,
+                        "[VULKAN] WARNING: eMailbox/eImmediate not supported. V-Sync will lock "
+                        "FPS to 60Hz.");
+            std::fprintf(stderr,
+                         "[VULKAN] WARNING: eMailbox/eImmediate not supported. V-Sync will lock "
+                         "FPS to 60Hz.\n");
         }
     } else {
-        // Capped FPS (fps_limit > 0): Use FIFO (V-Sync) for smooth frame pacing
-        if (has_mode(vk::PresentModeKHR::eFifo)) {
-            present_mode = vk::PresentModeKHR::eFifo;
-        } else if (has_mode(vk::PresentModeKHR::eMailbox)) {
-            present_mode = vk::PresentModeKHR::eMailbox;
-        } else {
-            present_mode = modes.empty() ? vk::PresentModeKHR::eFifo : modes.front();
-        }
+        // 60 FPS or lower: FIFO gives smooth frame pacing without tearing.
+        present_mode = vk::PresentModeKHR::eFifo;
     }
 
-    const char* mode_name = (present_mode == vk::PresentModeKHR::eImmediate) ? "IMMEDIATE" :
-                            (present_mode == vk::PresentModeKHR::eMailbox)   ? "MAILBOX" :
-                            (present_mode == vk::PresentModeKHR::eFifo)      ? "FIFO" : "OTHER";
-
-    LOG_INFO(Render_Vulkan, "[PERF] Swapchain Present Mode: {} (fps_limit={})", mode_name, limit);
-    std::fprintf(stderr, "[PERF] Swapchain Present Mode: %s (fps_limit=%d)\n", mode_name, limit);
+    LOG_INFO(Render_Vulkan, "[VULKAN] Requested FPS: {}. Using Present Mode: {}.", limit,
+             mode_name(present_mode));
+    std::fprintf(stderr, "[VULKAN] Requested FPS: %d. Using Present Mode: %s.\n", limit,
+                 mode_name(present_mode));
 }
 
 void Swapchain::SetSurfaceProperties() {

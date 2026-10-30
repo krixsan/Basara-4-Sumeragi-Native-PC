@@ -203,6 +203,8 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
                                    CameraMotion& camera_motion_, SceneTargets& scene_targets_)
     : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_},
       runtime{runtime_}, camera_motion{camera_motion_}, scene_targets{scene_targets_} {
+    std::fprintf(stderr, "[VULKAN] Internal Render Scale received from INI: %.1fx\n",
+                 BbSettings::Get().render_scale.load());
     // Reject unsupported shaders before allocating resources or recording a frame.
     BbSettings::ConfigureUpscalerSupport(instance.IsFsr4Int8Supported(),
                                          instance.IsFsr411Supported());
@@ -392,10 +394,27 @@ bool TemporalUpscaler::OnFrameStart() {
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
     // On GPUs without D32S8 blit support, UI depth is cleared instead of copied from scene.
     if (!scaled_session) {
-        scene_targets.SetSize(SceneResolution::ForPreset(active ? preset : 0,
-                                                        {target_width, target_height}));
+        auto scene_size = SceneResolution::ForPreset(active ? preset : 0,
+                                                     {target_width, target_height});
+        // Native-path supersampling/downsampling. The temporal presets already choose their
+        // own render size, and FSR expects render <= output, so only scale when it is off.
+        const float render_scale =
+            active ? 1.0f : std::clamp(settings.render_scale.load(), 0.5f, 2.0f);
+        if (render_scale != 1.0f) {
+            scene_size.width = std::max(
+                2u, static_cast<u32>(std::lround(scene_size.width * render_scale)) & ~1u);
+            scene_size.height = std::max(
+                2u, static_cast<u32>(std::lround(scene_size.height * render_scale)) & ~1u);
+        }
+        scene_targets.SetSize(scene_size);
         render_width = scene_targets.Size().width;
         render_height = scene_targets.Size().height;
+    }
+    if (render_width != logged_render_width || render_height != logged_render_height) {
+        std::fprintf(stderr, "[VULKAN] Render Target Resolution: %dx%d\n",
+                     static_cast<int>(render_width), static_cast<int>(render_height));
+        logged_render_width = render_width;
+        logged_render_height = render_height;
     }
     BbSettings::Get().active_render_width = Scaled() ? render_width : scene_targets.Size().width;
     BbSettings::Get().active_render_height = Scaled() ? render_height : scene_targets.Size().height;

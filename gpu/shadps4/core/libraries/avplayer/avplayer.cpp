@@ -144,8 +144,14 @@ int PS4_SYSV_ABI sceAvPlayerChangeStream() {
     return ORBIS_OK;
 }
 
+
+
 s32 PS4_SYSV_ABI sceAvPlayerClose(AvPlayerHandle handle) {
-    std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p)\n", (void*)handle);
+    uint32_t close_tid = 0;
+#ifdef _WIN32
+    close_tid = (uint32_t)GetCurrentThreadId();
+#endif
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p) ENTER on TID=%u\n", (void*)handle, close_tid);
     std::fflush(stderr);
     LOG_TRACE(Lib_AvPlayer, "called");
     if (handle == nullptr) {
@@ -164,14 +170,22 @@ s32 PS4_SYSV_ABI sceAvPlayerClose(AvPlayerHandle handle) {
         if (stub) {
             stub->closed.store(true, std::memory_order_release);
         }
+        std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p) EXIT on TID=%u (bypassed)\n", (void*)handle, close_tid);
+        std::fflush(stderr);
         return ORBIS_OK;
     }
     if (!UnregisterActivePlayer(handle)) {
         LOG_WARNING(Lib_AvPlayer, "sceAvPlayerClose called on already closed or invalid handle %p", (void*)handle);
+        std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p) on TID=%u: already unregistered/closed\n", (void*)handle, close_tid);
+        std::fflush(stderr);
         return ORBIS_OK;
     }
     runtime_audio_stop_movie();
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p) deleting player object on TID=%u...\n", (void*)handle, close_tid);
+    std::fflush(stderr);
     delete handle;
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerClose(handle=%p) EXIT on TID=%u (player deleted)\n", (void*)handle, close_tid);
+    std::fflush(stderr);
     return ORBIS_OK;
 }
 

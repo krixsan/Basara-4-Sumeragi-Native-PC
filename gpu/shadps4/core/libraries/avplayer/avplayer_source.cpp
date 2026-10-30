@@ -15,6 +15,7 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <unordered_map>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -30,7 +31,63 @@ extern "C" {
 extern "C" int runtime_file_translate(const char* guest, char* out, size_t size);
 extern "C" void runtime_audio_stop_movie(void);
 
+
+
 namespace Libraries::AvPlayer {
+
+struct BufferTrackerInfo {
+    uint64_t size;
+    bool is_texture;
+    uint32_t alloc_tid;
+    int ref_count;
+};
+
+static std::mutex s_buffer_tracker_mutex;
+static std::unordered_map<void*, BufferTrackerInfo> s_active_guest_buffers;
+
+void LogBufferAlloc(void* ptr, u64 size, bool is_texture) {
+    if (!ptr) return;
+    uint32_t tid = 0;
+#ifdef _WIN32
+    tid = (uint32_t)GetCurrentThreadId();
+#endif
+    {
+        std::lock_guard lock(s_buffer_tracker_mutex);
+        auto& info = s_active_guest_buffers[ptr];
+        info.size = size;
+        info.is_texture = is_texture;
+        info.alloc_tid = tid;
+        info.ref_count++;
+    }
+    std::fprintf(stderr, "[AvPlayerMem] ALLOC ptr=%p size=%llu is_tex=%d TID=%u\n",
+                 ptr, (unsigned long long)size, is_texture ? 1 : 0, tid);
+    std::fflush(stderr);
+}
+
+void LogBufferFree(void* ptr, u64 size, bool is_texture) {
+    if (!ptr) return;
+    uint32_t free_tid = 0;
+#ifdef _WIN32
+    free_tid = (uint32_t)GetCurrentThreadId();
+#endif
+    uint32_t alloc_tid = 0;
+    int remaining_refs = 0;
+    {
+        std::lock_guard lock(s_buffer_tracker_mutex);
+        auto it = s_active_guest_buffers.find(ptr);
+        if (it != s_active_guest_buffers.end()) {
+            alloc_tid = it->second.alloc_tid;
+            it->second.ref_count--;
+            remaining_refs = it->second.ref_count;
+            if (remaining_refs <= 0) {
+                s_active_guest_buffers.erase(it);
+            }
+        }
+    }
+    std::fprintf(stderr, "[AvPlayerMem] FREE ptr=%p size=%llu is_tex=%d free_TID=%u (alloc_TID=%u, other_refs_held=%d)\n",
+                 ptr, (unsigned long long)size, is_texture ? 1 : 0, free_tid, alloc_tid, remaining_refs > 0 ? 1 : 0);
+    std::fflush(stderr);
+}
 
 // v2.1.2: Diagnostic instrumentation for video freeze diagnosis
 static bool g_avplayer_trace_enabled = false;
@@ -371,10 +428,10 @@ bool AvPlayerSource::Start() {
     }
     m_frames_delivered.store(0);
     m_video_frames_delivered.store(0);
-    m_demuxer_thread.Run([this](std::stop_token stop) { this->DemuxerThread(stop); });
-    m_video_decoder_thread.Run([this](std::stop_token stop) { this->VideoDecoderThread(stop); });
-    m_audio_decoder_thread.Run([this](std::stop_token stop) { this->AudioDecoderThread(stop); });
-    m_watchdog_thread.Run([this](std::stop_token stop) { this->WatchdogThread(stop); });
+    m_demuxer_thread.Run([this](std::stop_token stop) { this->DemuxerThread(stop); }, "AvDemuxer");
+    m_video_decoder_thread.Run([this](std::stop_token stop) { this->VideoDecoderThread(stop); }, "AvVideoDecoder");
+    m_audio_decoder_thread.Run([this](std::stop_token stop) { this->AudioDecoderThread(stop); }, "AvAudioDecoder");
+    m_watchdog_thread.Run([this](std::stop_token stop) { this->WatchdogThread(stop); }, "AvWatchdog");
     m_start_time = std::chrono::high_resolution_clock::now();
     // Reset timestamp rebase on start
     m_video_ts_rebase.reset();
@@ -383,10 +440,23 @@ bool AvPlayerSource::Start() {
 }
 
 bool AvPlayerSource::Stop() {
+    uint32_t stop_caller_tid = 0;
+#ifdef _WIN32
+    stop_caller_tid = (uint32_t)GetCurrentThreadId();
+#endif
+    std::fprintf(stderr, "[AvPlayer] AvPlayerSource::Stop() ENTER from TID=%u\n", stop_caller_tid);
+    std::fprintf(stderr, "[AvPlayer]   Audio decoder thread: TID=%u, joinable=%d, finished=%d\n",
+                 m_audio_decoder_thread.GetTid(), m_audio_decoder_thread.Joinable(), m_audio_decoder_thread.IsFinished());
+    std::fprintf(stderr, "[AvPlayer]   Video decoder thread: TID=%u, joinable=%d, finished=%d\n",
+                 m_video_decoder_thread.GetTid(), m_video_decoder_thread.Joinable(), m_video_decoder_thread.IsFinished());
+    std::fflush(stderr);
+
     std::unique_lock lock(m_state_mutex);
     runtime_audio_stop_movie();
 
     if (!HasRunningThreads()) {
+        std::fprintf(stderr, "[AvPlayer] AvPlayerSource::Stop() from TID=%u: no running threads (already stopped)\n", stop_caller_tid);
+        std::fflush(stderr);
         LOG_WARNING(Lib_AvPlayer, "Could not stop playback: already stopped.");
         return false;
     }
@@ -395,10 +465,19 @@ bool AvPlayerSource::Stop() {
         m_up_data_streamer->Reset();
     }
 
+    std::fprintf(stderr, "[AvPlayer] Stopping decoder threads before buffer teardown (TID=%u)...\n", stop_caller_tid);
+    std::fflush(stderr);
+
     m_video_decoder_thread.Stop();
     m_audio_decoder_thread.Stop();
     m_demuxer_thread.Stop();
     m_watchdog_thread.Stop();
+
+    std::fprintf(stderr, "[AvPlayer] Decoder threads stopped! Audio decoder joinable=%d, finished=%d. Now clearing buffers on TID=%u:\n",
+                 m_audio_decoder_thread.Joinable(), m_audio_decoder_thread.IsFinished(), stop_caller_tid);
+    std::fprintf(stderr, "[AvPlayer]   Buffers before clear: audio_buf=%zu, video_buf=%zu, audio_frames=%zu, video_frames=%zu\n",
+                 m_audio_buffers.Size(), m_video_buffers.Size(), m_audio_frames.Size(), m_video_frames.Size());
+    std::fflush(stderr);
 
     m_current_audio_frame.reset();
     m_current_video_frame.reset();
@@ -409,6 +488,9 @@ bool AvPlayerSource::Stop() {
     m_video_packets.Clear();
     m_audio_frames.Clear();
     m_video_frames.Clear();
+
+    std::fprintf(stderr, "[AvPlayer] Buffer queues cleared on TID=%u.\n", stop_caller_tid);
+    std::fflush(stderr);
 
     m_last_audio_ts.reset();
     m_last_data_time.reset();

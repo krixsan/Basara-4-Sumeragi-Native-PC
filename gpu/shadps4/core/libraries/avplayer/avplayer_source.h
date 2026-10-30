@@ -40,6 +40,9 @@ public:
     virtual void OnEOF() = 0;
 };
 
+void LogBufferAlloc(void* ptr, u64 size, bool is_texture);
+void LogBufferFree(void* ptr, u64 size, bool is_texture);
+
 class GuestBuffer {
 public:
     GuestBuffer(const AvPlayerMemAllocator& memory_replacement, u32 align, u32 size,
@@ -49,10 +52,14 @@ public:
                             : Allocate(memory_replacement, align, size)),
           m_size(size), m_is_texture(is_texture) {
         ASSERT_MSG(m_data, "Could not allocate frame buffer.");
+        if (m_data) {
+            LogBufferAlloc(m_data, size, is_texture);
+        }
     }
 
     ~GuestBuffer() {
         if (m_data != nullptr) {
+            LogBufferFree(m_data, m_size, m_is_texture);
             if (m_is_texture) {
                 DeallocateTexture(m_memory_replacement, m_data);
             } else {
