@@ -85,9 +85,26 @@ void InverseBallotEliminationPass(IR::Program& program) {
                 inst->ReplaceUsesWithAndRemove(IR::Value{false});
             } else if (value.U64() == std::numeric_limits<u64>::max()) {
                 inst->ReplaceUsesWithAndRemove(IR::Value{true});
+            } else if (value.U64() == 0x1111111111111111ull || value.U64() == 0x11111111ull) {
+                // GCN quad leader mask (lane 0, 4, 8, ...).
+                // Equivalent to (LaneId & 3) == 0.
+                IR::Block* const block = inst->GetParent();
+                auto insert_point = IR::Block::InstructionList::s_iterator_to(*inst);
+                IR::IREmitter ir{*block, insert_point};
+                const IR::U1 is_quad_leader = ir.IEqual(
+                    ir.BitwiseAnd(ir.LaneId(), ir.Imm32(3u)),
+                    ir.Imm32(0u)
+                );
+                inst->ReplaceUsesWithAndRemove(is_quad_leader);
             } else {
-                LOG_WARNING(Render_Recompiler,
-                            "Unhandled immediate argument {:#x} for InverseBallot", value.U64());
+                IR::Block* const block = inst->GetParent();
+                auto insert_point = IR::Block::InstructionList::s_iterator_to(*inst);
+                IR::IREmitter ir{*block, insert_point};
+                const IR::U1 bit_set = ir.INotEqual(
+                    ir.BitwiseAnd(ir.ShiftRightLogical(ir.Imm64(value.U64()), ir.LaneId()), ir.Imm64(1ull)),
+                    ir.Imm64(0ull)
+                );
+                inst->ReplaceUsesWithAndRemove(bit_set);
             }
             continue;
         }
