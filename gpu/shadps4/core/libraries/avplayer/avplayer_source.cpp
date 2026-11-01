@@ -450,6 +450,7 @@ bool AvPlayerSource::Stop() {
     std::fprintf(stderr, "[AvPlayer]   Video decoder thread: TID=%u, joinable=%d, finished=%d\n",
                  m_video_decoder_thread.GetTid(), m_video_decoder_thread.Joinable(), m_video_decoder_thread.IsFinished());
     std::fflush(stderr);
+    LOG_INFO(Lib_AvPlayer, "Stop() ENTER tid={}", stop_caller_tid);
 
     std::unique_lock lock(m_state_mutex);
     runtime_audio_stop_movie();
@@ -467,11 +468,16 @@ bool AvPlayerSource::Stop() {
 
     std::fprintf(stderr, "[AvPlayer] Stopping decoder threads before buffer teardown (TID=%u)...\n", stop_caller_tid);
     std::fflush(stderr);
+    LOG_INFO(Lib_AvPlayer, "Stop(): stopping decoder threads");
 
     m_video_decoder_thread.Stop();
+    LOG_INFO(Lib_AvPlayer, "Stop(): video decoder stopped");
     m_audio_decoder_thread.Stop();
+    LOG_INFO(Lib_AvPlayer, "Stop(): audio decoder stopped");
     m_demuxer_thread.Stop();
+    LOG_INFO(Lib_AvPlayer, "Stop(): demuxer stopped");
     m_watchdog_thread.Stop();
+    LOG_INFO(Lib_AvPlayer, "Stop(): watchdog stopped");
 
     std::fprintf(stderr, "[AvPlayer] Decoder threads stopped! Audio decoder joinable=%d, finished=%d. Now clearing buffers on TID=%u:\n",
                  m_audio_decoder_thread.Joinable(), m_audio_decoder_thread.IsFinished(), stop_caller_tid);
@@ -482,12 +488,15 @@ bool AvPlayerSource::Stop() {
     m_current_audio_frame.reset();
     m_current_video_frame.reset();
 
+    LOG_INFO(Lib_AvPlayer, "Stop(): clearing guest buffers (audio={} video={})",
+             m_audio_buffers.Size(), m_video_buffers.Size());
     m_video_buffers.Clear();
     m_audio_buffers.Clear();
     m_audio_packets.Clear();
     m_video_packets.Clear();
     m_audio_frames.Clear();
     m_video_frames.Clear();
+    LOG_INFO(Lib_AvPlayer, "Stop(): buffers cleared, Stop() complete");
 
     std::fprintf(stderr, "[AvPlayer] Buffer queues cleared on TID=%u.\n", stop_caller_tid);
     std::fflush(stderr);
@@ -1336,8 +1345,13 @@ void AvPlayerSource::WatchdogThread(std::stop_token stop) {
             fprintf(stderr, "  Set BASARA_AVPLAYER_TRACE=1 for detailed event log\n");
             fprintf(stderr, "\n");
             
-            // Force stop to unblock game
-            std::unique_lock lock(m_state_mutex);
+            // Force stop to unblock game. Never block here: Stop() holds m_state_mutex
+            // while it joins this thread, so a blocking lock deadlocks the teardown.
+            std::unique_lock lock(m_state_mutex, std::try_to_lock);
+            if (!lock.owns_lock()) {
+                LOG_WARNING(Lib_AvPlayer, "Watchdog: state mutex busy (Stop in progress), skipping OnError");
+                break;
+            }
             m_state.OnError();
             break;
         }

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
+#include <exception>
 #include <boost/asio/io_context.hpp>
 #include "common/polyfill_thread.h"
 #include "video_core/renderdoc.h"
@@ -314,6 +316,26 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 
 namespace Libraries::Kernel { void StartKernelService(); }
 extern "C" void bbgpu_register_kernel(void) {
+    std::set_terminate([] {
+        const char* what = "unknown exception";
+        if (const auto ep = std::current_exception()) {
+            try {
+                std::rethrow_exception(ep);
+            } catch (const std::exception& e) {
+                what = e.what();
+            } catch (...) {
+            }
+        } else {
+            what = "std::terminate() with no active exception";
+        }
+        std::fprintf(stderr, "[CRASH] std::terminate: %s\n", what);
+        std::fflush(stderr);
+        try {
+            LOG_ERROR(Frontend, "[CRASH] std::terminate: {}", what);
+        } catch (...) {
+        }
+        std::abort();
+    });
     Libraries::Kernel::StartKernelService();
     Core::Loader::SymbolsResolver resolver;
     Libraries::Kernel::RegisterEventQueue(&resolver);

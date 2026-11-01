@@ -81,6 +81,15 @@ if exist "%~dp0out\content.bin" (
 echo Starting Sengoku Basara 4 Sumeragi...
 echo.
 
+rem Prefer smart Python launcher & crash reporter if Python is available
+where python >nul 2>&1
+if %errorlevel%==0 (
+    if exist "%~dp0Play_Basara4.py" (
+        python "%~dp0Play_Basara4.py"
+        exit /b %errorlevel%
+    )
+)
+
 start "" "%~dp0basara_pc.exe" "!BOOT_BIN!" !EXTRA_ARGS! --app0 "!APP0_DIR!" --user "%~dp0user"
 
 exit /b 0

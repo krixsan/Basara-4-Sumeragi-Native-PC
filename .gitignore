@@ -8,6 +8,7 @@
 extracted_game/
 out/
 build/
+dist/
 user/
 backup*/
 release_package/
@@ -53,11 +54,28 @@ scratch/
 *.mon
 *.png
 *.jpg
+*.ico
 *.tmp
 *.bak
+*.pre-shader-fix
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.pyw
+
+# Build artifacts
+build/
+dist/
 *.spec
+
+# Crash Reporter artifacts
+crashes/
+user/crashes/
+*.dmp
+*.zip
 
 # Block all internal Python, PowerShell, Shell scripts, and text files everywhere
 *.py
@@ -89,6 +107,7 @@ docs/
 
 # Whitelist allowed root files
 !launcher.py
+!Play_Basara4.py
 !Play_Basara4.bat
 !basara.ini
 !CMakeLists.txt

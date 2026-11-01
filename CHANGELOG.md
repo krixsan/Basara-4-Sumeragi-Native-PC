@@ -1,5 +1,17 @@
 # Changelog
 
+## [v2.1.0] - 2026-11-01
+### 🚀 Highlights
+- **Fixed Stack Buffer Overflow**: Menyelesaikan crash fatal `guest stack protector detected corruption` di Stage Select via runtime trampoline patch (`patches.bin`).
+- **Fixed AvPlayer Deadlock**: Memperbaiki freeze/hang saat teardown video menggunakan `try_to_lock` pada Watchdog.
+- **Enterprise Crash Reporter**: UI Crash Reporter baru (CustomTkinter), Minidump Parser, dan Auto-ZIP bundling.
+- **80+ FPS Unlocked**: Gameplay lebih mulus berkat perbaikan error handling teks.
+
+### ⚠️ Known Issues
+- Freeze saat transisi cutscene karakter (`sceAvPlayerDisableStream` stubbed). Saat ini di-bypass oleh Watchdog.
+
+---
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

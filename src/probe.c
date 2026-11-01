@@ -445,6 +445,38 @@ LONG fatal_exception(EXCEPTION_POINTERS *info) {
     TerminateProcess(GetCurrentProcess(),3);
     return EXCEPTION_CONTINUE_SEARCH;
 }
+/* Guest AVs are forwarded to guest SEH, which can end the process with no report if the
+ * fault is on a host thread (std::thread). Leave a raw breadcrumb before continuing search. */
+static void log_guest_fault(const EXCEPTION_RECORD *record) {
+    CreateDirectoryA("user/crashes", NULL);
+    HANDLE h = CreateFileA("user/crashes/guest_faults.log", FILE_APPEND_DATA,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    const uintptr_t rip = (uintptr_t)record->ExceptionAddress;
+    const uintptr_t target = record->NumberParameters >= 2
+                                 ? (uintptr_t)record->ExceptionInformation[1] : 0;
+    const char *access = record->NumberParameters >= 1
+                             ? (record->ExceptionInformation[0] == 1 ? "write" :
+                                record->ExceptionInformation[0] == 8 ? "execute" : "read")
+                             : "n/a";
+    const char *name = runtime_thread_current_name();
+    char buf[512];
+    const int len = snprintf(buf, sizeof(buf),
+        "%04u-%02u-%02u %02u:%02u:%02u.%03u tid=%lu guest=%s %s rip=0x%llx (off 0x%llx) target=0x%llx\n",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        GetCurrentThreadId(), name ? name : "?", access,
+        (unsigned long long)rip, (unsigned long long)(rip - (uintptr_t)image),
+        (unsigned long long)target);
+    if (len > 0) {
+        DWORD written = 0;
+        WriteFile(h, buf, (DWORD)len, &written, NULL);
+    }
+    CloseHandle(h);
+}
+
 static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     DWORD code=record->ExceptionCode;
@@ -509,6 +541,10 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
                          (fault_rip - (uintptr_t)image < 0x20000000);
     if (code == EXCEPTION_ACCESS_VIOLATION && !guest_fault) {
         return fatal_exception(info);
+    }
+
+    if (code == EXCEPTION_ACCESS_VIOLATION && guest_fault) {
+        log_guest_fault(record);
     }
 
     /* In-guest exceptions: allow game SEH (__try / __except) inside guest frames to handle.
@@ -834,6 +870,7 @@ void runtime_restart(void) {
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
 #ifdef _WIN32
     log_init();
     LOG_INFO("probe", "Sengoku Basara 4 Sumeragi PC Engine starting");
