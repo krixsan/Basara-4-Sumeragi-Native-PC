@@ -26,6 +26,31 @@ import platform
 import math
 from datetime import datetime
 
+# ==============================================================================
+# BASE DIRECTORY & PATH RESOLUTION (Enterprise Path Resolver)
+# ==============================================================================
+if getattr(sys, "frozen", False):
+    # Running inside PyInstaller onefile/onedir bundle
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # Running directly as Python script
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Always switch working directory to BASE_DIR so relative paths and DLLs resolve correctly
+try:
+    os.chdir(BASE_DIR)
+except Exception:
+    pass
+
+def base_path(*paths) -> str:
+    """Resolves paths strictly relative to BASE_DIR (executable location)."""
+    return os.path.normpath(os.path.join(BASE_DIR, *paths))
+
+# Ensure standard runtime folders exist relative to executable
+os.makedirs(base_path("crashes"), exist_ok=True)
+os.makedirs(base_path("user", "logs"), exist_ok=True)
+os.makedirs(base_path("user", "crashes"), exist_ok=True)
+
 # --- Auto-Dependency Verification & Installation (customtkinter, psutil, minidump) ---
 def ensure_dependencies():
     """Ensures required GUI, diagnostic, and crash analysis dependencies are available."""
@@ -119,8 +144,8 @@ FONT_FAMILY = "Segoe UI"
 FONT_TITLE = "Segoe UI Black"
 FONT_SUBTITLE = "Segoe UI Semibold"
 
-INI_FILE = "basara.ini"
-FALLBACK_INI = "basara.ini"
+INI_FILE = base_path("basara.ini")
+FALLBACK_INI = base_path("basara.ini")
 
 
 def read_ini():
@@ -264,18 +289,18 @@ def check_link_health(boot_bin=None):
 
 def verify_game_installation():
     missing = []
-    exe = "basara_pc.exe"
+    exe = base_path("basara_pc.exe")
     if not os.path.isfile(exe):
         missing.append("basara_pc.exe")
 
     boot_bin = None
-    for cand in ["boot-linked.bin", os.path.join("out", "boot-linked.bin")]:
+    for cand in [base_path("boot-linked.bin"), base_path("out", "boot-linked.bin")]:
         if os.path.isfile(cand):
             boot_bin = cand
             break
 
     app0 = None
-    for cand in [os.path.join("extracted_game", "app0"), "app0"]:
+    for cand in [base_path("extracted_game", "app0"), base_path("app0")]:
         if os.path.isdir(cand):
             app0 = cand
             break
@@ -373,7 +398,7 @@ def check_dependencies(show_dialogs=True):
 
     # 4. Disk Space Check (>= 500 MB)
     try:
-        free_mb = shutil.disk_usage(os.getcwd()).free // (1024 * 1024)
+        free_mb = shutil.disk_usage(BASE_DIR).free // (1024 * 1024)
         results["disk_mb"] = free_mb
         results["disk"] = (free_mb >= 500)
     except Exception:
@@ -1191,7 +1216,7 @@ CONTEXT_KEYWORDS = [
 
 def get_game_version():
     """Reads game version from VERSION.txt or returns default."""
-    for path in ["VERSION.txt", "version.txt"]:
+    for path in [base_path("VERSION.txt"), base_path("version.txt")]:
         if os.path.isfile(path):
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1314,9 +1339,9 @@ def check_dump_file(max_age_seconds=7200):
     Returns: (found: bool, status_str: str, dmp_path: str or None)
     """
     search_dirs = [
-        "crashes",
-        os.path.join("user", "crashes"),
-        os.path.join("user", "crash"),
+        base_path("crashes"),
+        base_path("user", "crashes"),
+        base_path("user", "crash"),
     ]
     dmps = []
     now = datetime.now().timestamp()
@@ -1420,9 +1445,9 @@ def parse_minidump(dmp_path: str):
 def get_guest_faults_breadcrumb():
     """Reads user/crashes/guest_faults.log if present."""
     candidates = [
-        os.path.join("user", "crashes", "guest_faults.log"),
-        os.path.join("crashes", "guest_faults.log"),
-        "guest_faults.log",
+        base_path("user", "crashes", "guest_faults.log"),
+        base_path("crashes", "guest_faults.log"),
+        base_path("guest_faults.log"),
     ]
     for p in candidates:
         if os.path.isfile(p):
@@ -1439,10 +1464,10 @@ def get_guest_faults_breadcrumb():
 def find_latest_log():
     """Locates the latest log file across standard paths."""
     candidates = [
-        os.path.join("user", "logs", "last_run.log"),
-        "last_run.log",
-        os.path.join("user", "logs", "basara.log"),
-        "basara.log",
+        base_path("user", "logs", "last_run.log"),
+        base_path("last_run.log"),
+        base_path("user", "logs", "basara.log"),
+        base_path("basara.log"),
     ]
     existing = [p for p in candidates if os.path.isfile(p)]
     if not existing:
@@ -1545,7 +1570,7 @@ def create_crash_bundle(report_path: str, log_copy_path: str = None, dmp_path: s
     Returns: absolute path to the generated ZIP file, or None on error.
     """
     try:
-        crashes_dir = os.path.abspath("crashes")
+        crashes_dir = base_path("crashes")
         os.makedirs(crashes_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         bundle_path = os.path.join(crashes_dir, f"crash_bundle_{ts}.zip")
@@ -1559,9 +1584,9 @@ def create_crash_bundle(report_path: str, log_copy_path: str = None, dmp_path: s
         # 2. last_run.log
         last_run_candidates = [
             log_copy_path,
-            os.path.join("user", "logs", "last_run.log"),
-            os.path.join("crashes", "last_run.log"),
-            "last_run.log"
+            base_path("user", "logs", "last_run.log"),
+            base_path("crashes", "last_run.log"),
+            base_path("last_run.log")
         ]
         for p in last_run_candidates:
             if p and os.path.isfile(p):
@@ -1570,9 +1595,9 @@ def create_crash_bundle(report_path: str, log_copy_path: str = None, dmp_path: s
 
         # 3. basara.log
         basara_candidates = [
-            os.path.join("user", "logs", "basara.log"),
-            os.path.join("crashes", "basara.log"),
-            "basara.log"
+            base_path("user", "logs", "basara.log"),
+            base_path("crashes", "basara.log"),
+            base_path("basara.log")
         ]
         for p in basara_candidates:
             if p and os.path.isfile(p):
@@ -1581,9 +1606,9 @@ def create_crash_bundle(report_path: str, log_copy_path: str = None, dmp_path: s
 
         # 4. guest_faults.log
         faults_candidates = [
-            os.path.join("user", "crashes", "guest_faults.log"),
-            os.path.join("crashes", "guest_faults.log"),
-            "guest_faults.log"
+            base_path("user", "crashes", "guest_faults.log"),
+            base_path("crashes", "guest_faults.log"),
+            base_path("guest_faults.log")
         ]
         for p in faults_candidates:
             if p and os.path.isfile(p):
@@ -1620,7 +1645,7 @@ def generate_crash_report(exit_code: int, log_path: str, trigger_reason: str, ma
     and creates a unified crash bundle ZIP.
     Returns: (report_path, log_copy_path, report_content, bundle_path)
     """
-    crashes_dir = os.path.abspath("crashes")
+    crashes_dir = base_path("crashes")
     os.makedirs(crashes_dir, exist_ok=True)
 
     now = datetime.now()
@@ -1767,8 +1792,8 @@ class CrashDialog:
 
     def __init__(self, report_path: str, crashes_dir: str, content: str, exit_code: int, reason: str, parent=None, bundle_path: str = None):
         self.parent = parent
-        self.report_path = os.path.abspath(report_path)
-        self.crashes_dir = os.path.abspath(crashes_dir)
+        self.report_path = os.path.normpath(report_path) if report_path else ""
+        self.crashes_dir = base_path(crashes_dir) if crashes_dir else base_path("crashes")
         self.content = content
         self.exit_code = exit_code
         self.reason = reason
@@ -1782,12 +1807,12 @@ class CrashDialog:
 
         # Resolve Crash Bundle ZIP path
         if bundle_path and os.path.isfile(bundle_path):
-            self.bundle_path = os.path.abspath(bundle_path)
+            self.bundle_path = os.path.normpath(bundle_path)
         else:
             zips = glob.glob(os.path.join(self.crashes_dir, "crash_bundle_*.zip"))
             if zips:
                 zips.sort(key=os.path.getmtime, reverse=True)
-                self.bundle_path = os.path.abspath(zips[0])
+                self.bundle_path = os.path.normpath(zips[0])
             else:
                 self.bundle_path = None
 
@@ -2400,7 +2425,7 @@ class BasaraLauncher(tk.Tk):
 
     def apply_window_icon(self):
         # Try game's extracted PNG icon first
-        icon_png = os.path.join("extracted_game", "app0", "sce_sys", "icon0.png")
+        icon_png = base_path("extracted_game", "app0", "sce_sys", "icon0.png")
         if os.path.isfile(icon_png):
             try:
                 img = Image.open(icon_png).convert("RGBA")
@@ -2409,7 +2434,7 @@ class BasaraLauncher(tk.Tk):
             except Exception:
                 pass
         # Fallback to .ico file
-        icon_ico = os.path.join("packaging", "windows", "icons", "basara4.ico")
+        icon_ico = base_path("packaging", "windows", "icons", "basara4.ico")
         if os.path.isfile(icon_ico):
             try:
                 self.iconbitmap(icon_ico)
@@ -2580,8 +2605,8 @@ class BasaraLauncher(tk.Tk):
 
         # 2. Game Icon (50x50)
         icon0_cand = [
-            os.path.join("extracted_game", "app0", "sce_sys", "icon0.png"),
-            os.path.join("app0", "sce_sys", "icon0.png"),
+            base_path("extracted_game", "app0", "sce_sys", "icon0.png"),
+            base_path("app0", "sce_sys", "icon0.png"),
         ]
         self.photo_icon0 = None
         for p in icon0_cand:
@@ -3497,8 +3522,8 @@ class BasaraLauncher(tk.Tk):
 
     def open_changelog(self):
         candidates = [
+            base_path("CHANGELOG.md"),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "CHANGELOG.md"),
-            os.path.abspath("CHANGELOG.md"),
         ]
         changelog_path = next((p for p in candidates if os.path.exists(p)), None)
         if changelog_path:
@@ -3584,7 +3609,7 @@ class BasaraLauncher(tk.Tk):
         self.launch_game()
 
     def open_logs_folder(self):
-        log_dir = os.path.abspath(os.path.join("user", "logs"))
+        log_dir = base_path("user", "logs")
         os.makedirs(log_dir, exist_ok=True)
         try:
             os.startfile(log_dir)
@@ -3610,7 +3635,7 @@ class BasaraLauncher(tk.Tk):
                 report_path, log_copy, content = res[:3]
                 bundle_path = None
             self.deiconify()
-            dialog = CrashDialog(report_path, os.path.abspath("crashes"), content, exit_code, reason, parent=self, bundle_path=bundle_path)
+            dialog = CrashDialog(report_path, base_path("crashes"), content, exit_code, reason, parent=self, bundle_path=bundle_path)
             dialog.show()
             return
         except Exception as err:
@@ -3975,20 +4000,20 @@ class BasaraLauncher(tk.Tk):
                 env["BB_PRIORITY"] = self.prio_val
 
             # Gamepad mapping support
-            for map_path in [os.path.join("user", "gamepad_mapping.txt"), "gamepad_mapping.txt"]:
+            for map_path in [base_path("user", "gamepad_mapping.txt"), base_path("gamepad_mapping.txt")]:
                 if os.path.isfile(map_path):
-                    env["SDL_GAMECONTROLLERCONFIG_FILE"] = os.path.abspath(map_path)
+                    env["SDL_GAMECONTROLLERCONFIG_FILE"] = base_path(map_path)
                     break
 
             cmd = [
-                os.path.abspath(exe),
-                os.path.abspath(boot_bin)
+                base_path(exe),
+                base_path(boot_bin)
             ]
-            import_names = os.path.join("out", "import_names.txt")
-            if not os.path.isfile(import_names) and os.path.isfile("import_names.txt"):
-                import_names = "import_names.txt"
+            import_names = base_path("out", "import_names.txt")
+            if not os.path.isfile(import_names) and os.path.isfile(base_path("import_names.txt")):
+                import_names = base_path("import_names.txt")
             if os.path.isfile(import_names):
-                cmd.extend(["--import-names", os.path.abspath(import_names)])
+                cmd.extend(["--import-names", base_path(import_names)])
 
             # 4. Pre-Launch WER Status & Patches Validation
             try:
@@ -3997,31 +4022,31 @@ class BasaraLauncher(tk.Tk):
             except Exception as e:
                 print(f"[LAUNCHER] WER check notice: {e}")
 
-            content_bin = os.path.join("out", "content.bin")
-            if not os.path.isfile(content_bin) and os.path.isfile("content.bin"):
-                content_bin = "content.bin"
+            content_bin = base_path("out", "content.bin")
+            if not os.path.isfile(content_bin) and os.path.isfile(base_path("content.bin")):
+                content_bin = base_path("content.bin")
             if os.path.isfile(content_bin):
-                cmd.extend(["--content-profile", os.path.abspath(content_bin)])
+                cmd.extend(["--content-profile", base_path(content_bin)])
 
-            patches_bin = os.path.join("out", "patches.bin")
-            if not os.path.isfile(patches_bin) and os.path.isfile("patches.bin"):
-                patches_bin = "patches.bin"
+            patches_bin = base_path("out", "patches.bin")
+            if not os.path.isfile(patches_bin) and os.path.isfile(base_path("patches.bin")):
+                patches_bin = base_path("patches.bin")
 
             if os.path.isfile(patches_bin):
-                cmd.extend(["--patches", os.path.abspath(patches_bin)])
+                cmd.extend(["--patches", base_path(patches_bin)])
                 print(f"[LAUNCHER] Active guest runtime patches verified: {patches_bin} ({os.path.getsize(patches_bin)} bytes)")
             else:
                 print("[LAUNCHER] Warning: patches.bin not found! Dynamic guest hooks will not be applied.")
 
-            cmd.extend(["--app0", os.path.abspath(app0), "--user", "user"])
+            cmd.extend(["--app0", base_path(app0), "--user", base_path("user")])
 
             # Seamless minimize/hide on main thread
             self.after(0, self.withdraw)
 
-            os.makedirs(os.path.join("user", "logs"), exist_ok=True)
-            log_file_path = os.path.join("user", "logs", "last_run.log")
+            os.makedirs(base_path("user", "logs"), exist_ok=True)
+            log_file_path = base_path("user", "logs", "last_run.log")
             with open(log_file_path, "w", encoding="utf-8", errors="replace") as log_file:
-                proc = subprocess.Popen(cmd, cwd=os.getcwd(), env=env, stdout=log_file, stderr=subprocess.STDOUT)
+                proc = subprocess.Popen(cmd, cwd=BASE_DIR, env=env, stdout=log_file, stderr=subprocess.STDOUT)
                 proc.wait()
 
             # 3. Post-execution Crash Detection & Dialog Integration
@@ -4231,7 +4256,7 @@ if __name__ == "__main__":
         print(f"[TEST-CRASH] Generated report: {report_path}")
         if bundle_path:
             print(f"[TEST-CRASH] Generated crash bundle ZIP: {bundle_path}")
-        dialog = CrashDialog(report_path, os.path.abspath("crashes"), content, dummy_code, reason, bundle_path=bundle_path)
+        dialog = CrashDialog(report_path, base_path("crashes"), content, dummy_code, reason, bundle_path=bundle_path)
         dialog.show()
         sys.exit(0)
     elif "--prepare-only" in sys.argv or "-p" in sys.argv:

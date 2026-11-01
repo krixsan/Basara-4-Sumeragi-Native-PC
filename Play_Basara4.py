@@ -16,6 +16,27 @@ import ctypes
 from ctypes import wintypes
 from datetime import datetime
 
+# ==============================================================================
+# BASE DIRECTORY & PATH RESOLUTION (Enterprise Path Resolver)
+# ==============================================================================
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+try:
+    os.chdir(BASE_DIR)
+except Exception:
+    pass
+
+def base_path(*paths) -> str:
+    """Resolves relative paths strictly against BASE_DIR (executable location)."""
+    return os.path.normpath(os.path.join(BASE_DIR, *paths))
+
+os.makedirs(base_path("crashes"), exist_ok=True)
+os.makedirs(base_path("user", "logs"), exist_ok=True)
+os.makedirs(base_path("user", "crashes"), exist_ok=True)
+
 # Optional psutil support
 try:
     import psutil
@@ -71,7 +92,7 @@ CONTEXT_KEYWORDS = [
 
 def get_game_version():
     """Reads game version from VERSION.txt or returns default."""
-    for path in ["VERSION.txt", "version.txt"]:
+    for path in [base_path("VERSION.txt"), base_path("version.txt")]:
         if os.path.isfile(path):
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -350,7 +371,7 @@ def generate_crash_report(exit_code: int, log_path: str, trigger_reason: str, ma
     Includes memory diagnostics, dump file detection, and guest faults breadcrumb.
     Returns: (report_path, log_copy_path, report_content)
     """
-    crashes_dir = os.path.abspath("crashes")
+    crashes_dir = base_path("crashes")
     os.makedirs(crashes_dir, exist_ok=True)
 
     now = datetime.now()
@@ -447,8 +468,8 @@ class CrashDialog:
     """
 
     def __init__(self, report_path: str, crashes_dir: str, content: str, exit_code: int, reason: str):
-        self.report_path = os.path.abspath(report_path)
-        self.crashes_dir = os.path.abspath(crashes_dir)
+        self.report_path = os.path.normpath(report_path) if report_path else ""
+        self.crashes_dir = base_path(crashes_dir) if crashes_dir else base_path("crashes")
         self.content = content
         self.exit_code = exit_code
         self.reason = reason
@@ -1042,7 +1063,7 @@ def launch_game():
         print(f"[CRASH DETECTED] Laporan berhasil dibuat: {report_path}")
 
         if HAS_TK:
-            crashes_dir = os.path.abspath("crashes")
+            crashes_dir = base_path("crashes")
             dialog = CrashDialog(report_path, crashes_dir, content, exit_code, reason)
             dialog.show()
         else:
@@ -1066,7 +1087,7 @@ if __name__ == "__main__":
         is_crash, reason, matched = scan_log_for_crash(dummy_code, sim_log)
         report_path, log_copy, content = generate_crash_report(dummy_code, sim_log, "TEST SIMULATION (--test-crash), not a real crash: " + reason, matched)
         if HAS_TK:
-            dialog = CrashDialog(report_path, os.path.abspath("crashes"), content, dummy_code, reason)
+            dialog = CrashDialog(report_path, base_path("crashes"), content, dummy_code, reason)
             dialog.show()
         else:
             print(f"Report generated: {report_path}")
