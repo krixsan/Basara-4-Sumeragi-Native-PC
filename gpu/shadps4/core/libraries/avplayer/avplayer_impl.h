@@ -22,6 +22,7 @@ public:
     s32 GetStreamCount();
     s32 GetStreamInfo(u32 stream_index, AvPlayerStreamInfo& info);
     s32 EnableStream(u32 stream_index);
+    s32 DisableStream(u32 stream_index);
     s32 Start();
     s32 Pause();
     s32 Resume();

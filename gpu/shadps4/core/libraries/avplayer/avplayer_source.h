@@ -168,6 +168,7 @@ public:
     s32 GetStreamCount();
     bool GetStreamInfo(u32 stream_index, AvPlayerStreamInfo& info);
     bool EnableStream(u32 stream_index);
+    bool DisableStream(u32 stream_index);
     void SetLooping(bool is_looping);
     std::optional<bool> HasFrames(u32 num_frames);
     bool Start();
@@ -227,6 +228,8 @@ private:
     std::atomic_bool m_is_looping = false;
     std::atomic_bool m_is_paused = false;
     std::atomic_bool m_is_eof = false;
+    std::atomic_bool m_video_stream_enabled{false};
+    std::atomic_bool m_audio_stream_enabled{false};
     std::atomic<u64> m_frames_delivered{0};
     std::atomic<u64> m_video_frames_delivered{0};
 

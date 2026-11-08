@@ -146,6 +146,16 @@ s32 AvPlayer::EnableStream(u32 stream_index) {
     return ORBIS_OK;
 }
 
+s32 AvPlayer::DisableStream(u32 stream_index) {
+    if (m_state == nullptr) {
+        return ORBIS_AVPLAYER_ERROR_OPERATION_FAILED;
+    }
+    if (!m_state->DisableStream(stream_index)) {
+        return ORBIS_AVPLAYER_ERROR_OPERATION_FAILED;
+    }
+    return ORBIS_OK;
+}
+
 s32 AvPlayer::Start() {
     if (m_state == nullptr || !m_state->Start()) {
         return ORBIS_AVPLAYER_ERROR_OPERATION_FAILED;

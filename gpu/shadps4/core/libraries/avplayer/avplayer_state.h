@@ -29,6 +29,7 @@ public:
     s32 GetStreamCount();
     bool GetStreamInfo(u32 stream_index, AvPlayerStreamInfo& info);
     bool EnableStream(u32 stream_index);
+    bool DisableStream(u32 stream_index);
     bool Start();
     bool Stop();
     bool Pause();

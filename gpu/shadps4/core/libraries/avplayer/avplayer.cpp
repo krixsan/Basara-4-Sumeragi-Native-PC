@@ -201,11 +201,17 @@ u64 PS4_SYSV_ABI sceAvPlayerCurrentTime(AvPlayerHandle handle) {
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerDisableStream(AvPlayerHandle handle, u32 stream_id) {
-    LOG_ERROR(Lib_AvPlayer, "(STUBBED) called");
+    LOG_TRACE(Lib_AvPlayer, "stream_id = {}", stream_id);
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerDisableStream(handle=%p, stream_id=%u)\n",
+                 (void*)handle, stream_id);
+    fflush(stderr);
     if (handle == nullptr || (!AvPlayerBypassEnabled() && !IsActivePlayer(handle))) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
     }
-    return ORBIS_OK;
+    if (AvPlayerBypassEnabled()) {
+        return ORBIS_OK;
+    }
+    return handle->DisableStream(stream_id);
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerEnableStream(AvPlayerHandle handle, u32 stream_id) {

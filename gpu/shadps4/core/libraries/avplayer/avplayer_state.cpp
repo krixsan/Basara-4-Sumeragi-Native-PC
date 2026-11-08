@@ -284,6 +284,15 @@ bool AvPlayerState::EnableStream(u32 stream_index) {
 }
 
 // Called inside GAME thread
+bool AvPlayerState::DisableStream(u32 stream_index) {
+    std::shared_lock lock(m_source_mutex);
+    if (m_up_source == nullptr) {
+        return false;
+    }
+    return m_up_source->DisableStream(stream_index);
+}
+
+// Called inside GAME thread
 bool AvPlayerState::Stop() {
     std::shared_lock lock(m_source_mutex);
     if (m_up_source == nullptr || m_current_state == AvState::Stop) {

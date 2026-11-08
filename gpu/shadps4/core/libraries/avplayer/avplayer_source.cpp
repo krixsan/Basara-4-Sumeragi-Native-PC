@@ -324,23 +324,61 @@ bool AvPlayerSource::EnableStream(u32 stream_index) {
     if (m_avformat_context == nullptr || stream_index >= m_streams.size()) {
         return false;
     }
-    stream_index = m_streams[stream_index].ffmpeg_index;
-    const auto stream = m_avformat_context->streams[stream_index];
+    const u32 ffmpeg_index = static_cast<u32>(m_streams[stream_index].ffmpeg_index);
+    const auto stream = m_avformat_context->streams[ffmpeg_index];
+    fprintf(stderr,
+            "[AvPlayer] EnableStream: stream_id=%u ffmpeg_index=%u codec_type=%s info.type=%s\n",
+            stream_index, ffmpeg_index,
+            magic_enum::enum_name(stream->codecpar->codec_type).data(),
+            magic_enum::enum_name(m_streams[stream_index].info.type).data());
+    fflush(stderr);
     switch (stream->codecpar->codec_type) {
     case AVMediaType::AVMEDIA_TYPE_VIDEO: {
-        m_video_stream_index = stream_index;
-        LOG_INFO(Lib_AvPlayer, "Video stream {} enabled", stream_index);
+        m_video_stream_index = ffmpeg_index;
+        m_video_stream_enabled.store(true, std::memory_order_release);
+        LOG_INFO(Lib_AvPlayer, "Video stream {} enabled", ffmpeg_index);
         break;
     }
     case AVMediaType::AVMEDIA_TYPE_AUDIO: {
-        m_audio_stream_index = stream_index;
-        LOG_INFO(Lib_AvPlayer, "Audio stream {} enabled", stream_index);
+        m_audio_stream_index = ffmpeg_index;
+        m_audio_stream_enabled.store(true, std::memory_order_release);
+        LOG_INFO(Lib_AvPlayer, "Audio stream {} enabled", ffmpeg_index);
         break;
     }
     default:
         LOG_WARNING(Lib_AvPlayer, "Unknown stream type {} for stream {}",
-                    magic_enum::enum_name(stream->codecpar->codec_type), stream_index);
+                    magic_enum::enum_name(stream->codecpar->codec_type), ffmpeg_index);
         break;
+    }
+    return true;
+}
+
+bool AvPlayerSource::DisableStream(u32 stream_index) {
+    if (m_avformat_context == nullptr || stream_index >= m_streams.size()) {
+        return false;
+    }
+    const u32 ffmpeg_index = static_cast<u32>(m_streams[stream_index].ffmpeg_index);
+    const auto stream = m_avformat_context->streams[ffmpeg_index];
+    fprintf(stderr, "[AvPlayer] DisableStream: stream_id=%u ffmpeg_index=%u\n",
+            stream_index, ffmpeg_index);
+    fflush(stderr);
+    switch (stream->codecpar->codec_type) {
+    case AVMediaType::AVMEDIA_TYPE_VIDEO:
+        m_video_stream_enabled.store(false, std::memory_order_release);
+        LOG_INFO(Lib_AvPlayer, "Video stream {} disabled", ffmpeg_index);
+        fprintf(stderr, "[AvPlayer] Video stream %u disabled\n", ffmpeg_index);
+        fflush(stderr);
+        break;
+    case AVMediaType::AVMEDIA_TYPE_AUDIO:
+        m_audio_stream_enabled.store(false, std::memory_order_release);
+        LOG_INFO(Lib_AvPlayer, "Audio stream {} disabled", ffmpeg_index);
+        fprintf(stderr, "[AvPlayer] Audio stream %u disabled\n", ffmpeg_index);
+        fflush(stderr);
+        break;
+    default:
+        LOG_WARNING(Lib_AvPlayer, "Unknown stream type {} for stream {}",
+                    magic_enum::enum_name(stream->codecpar->codec_type), ffmpeg_index);
+        return false;
     }
     return true;
 }
@@ -356,11 +394,22 @@ std::optional<bool> AvPlayerSource::HasFrames(u32 num_frames) {
 bool AvPlayerSource::Start() {
     std::unique_lock lock(m_state_mutex);
 
+    fprintf(stderr, "[AvPlayer] Start(): video_idx=%d audio_idx=%d (m_streams.size=%zu)\n",
+            m_video_stream_index.value_or(-1), m_audio_stream_index.value_or(-1),
+            m_streams.size());
+    fflush(stderr);
+
     if (!m_video_stream_index && !m_audio_stream_index) {
         LOG_ERROR(Lib_AvPlayer, "Could not start playback. No streams.");
         return false;
     }
     if (m_video_stream_index) {
+        const s32 stored = m_video_stream_index.value();
+        if (stored < 0 || static_cast<size_t>(stored) >= m_streams.size()) {
+            fprintf(stderr, "[AvPlayer] WARN: m_video_stream_index=%d OUT OF RANGE (size=%zu)\n",
+                    stored, m_streams.size());
+            fflush(stderr);
+        }
         const auto stream_index = m_streams[m_video_stream_index.value()].ffmpeg_index;
         const auto stream = m_avformat_context->streams[stream_index];
         // BUG FIX 2 (P0): Check seek return value
@@ -394,6 +443,12 @@ bool AvPlayerSource::Start() {
         }
     }
     if (m_audio_stream_index) {
+        const s32 stored = m_audio_stream_index.value();
+        if (stored < 0 || static_cast<size_t>(stored) >= m_streams.size()) {
+            fprintf(stderr, "[AvPlayer] WARN: m_audio_stream_index=%d OUT OF RANGE (size=%zu)\n",
+                    stored, m_streams.size());
+            fflush(stderr);
+        }
         const auto stream_index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
         const auto stream = m_avformat_context->streams[stream_index];
         // BUG FIX 2 (P0): Check seek return value
@@ -543,6 +598,10 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfo& video_info) {
 
 bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
     InitTracing();
+
+    if (!m_video_stream_enabled.load(std::memory_order_acquire)) {
+        return false;
+    }
     
     // v2.1.2: Entry instrumentation
     if (g_avplayer_trace_enabled) {
@@ -619,6 +678,10 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
 bool AvPlayerSource::GetAudioData(AvPlayerFrameInfo& audio_info) {
     static u64 call_count = 0;
     call_count++;
+
+    if (!m_audio_stream_enabled.load(std::memory_order_acquire)) {
+        return false;
+    }
     
     if (!IsActive() || m_is_paused) {
         return false;
@@ -870,10 +933,12 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
             }
             break;
         }
-        if (up_packet->stream_index == m_video_stream_index) {
+        if (up_packet->stream_index == m_video_stream_index &&
+            m_video_stream_enabled.load(std::memory_order_acquire)) {
             m_video_packets.Push(std::move(up_packet));
             m_video_packets_cv.Notify();
-        } else if (up_packet->stream_index == m_audio_stream_index) {
+        } else if (up_packet->stream_index == m_audio_stream_index &&
+                   m_audio_stream_enabled.load(std::memory_order_acquire)) {
             m_audio_packets.Push(std::move(up_packet));
             m_audio_packets_cv.Notify();
         }
@@ -1326,6 +1391,12 @@ void AvPlayerSource::WatchdogThread(std::stop_token stop) {
             continue;
         }
         
+        if (!m_video_stream_enabled.load(std::memory_order_acquire)) {
+            last_delivered = m_video_frames_delivered.load(std::memory_order_relaxed);
+            last_check = steady_clock::now();
+            continue;
+        }
+
         // Auto-skip cutscene freeze: no video frames delivered for > 3s
         if (delivered_now == last_delivered && elapsed > 3000) {
             fprintf(stderr, "[AV_WATCHDOG] DEADLOCK DETECTED: No video frames delivered for %lld ms. Auto-stopping cutscene.\n", (long long)elapsed);
