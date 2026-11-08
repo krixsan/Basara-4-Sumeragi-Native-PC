@@ -1397,8 +1397,8 @@ void AvPlayerSource::WatchdogThread(std::stop_token stop) {
             continue;
         }
 
-        // Auto-skip cutscene freeze: no video frames delivered for > 3s
-        if (delivered_now == last_delivered && elapsed > 3000) {
+        // Auto-skip cutscene freeze: no video frames delivered for > 10s
+        if (delivered_now == last_delivered && elapsed > 10000) {
             fprintf(stderr, "[AV_WATCHDOG] DEADLOCK DETECTED: No video frames delivered for %lld ms. Auto-stopping cutscene.\n", (long long)elapsed);
             LOG_ERROR(Lib_AvPlayer, "Watchdog detected deadlock: no frames for {} ms. Force-stopping playback.", elapsed);
             

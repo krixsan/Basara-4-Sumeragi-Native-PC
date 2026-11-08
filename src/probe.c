@@ -874,7 +874,7 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     log_init();
     LOG_INFO("probe", "Sengoku Basara 4 Sumeragi PC Engine starting");
-    fprintf(stderr, "[ENGINE] Sengoku Basara 4 Sumeragi PC Native Port v2.0\n");
+    fprintf(stderr, "[ENGINE] Sengoku Basara 4 Sumeragi PC Native Port v2.1.1\n");
     fprintf(stderr, "[ENGINE] Game identity validated at setup time (param.sfo check passed)\n");
     fflush(stderr);
     {
