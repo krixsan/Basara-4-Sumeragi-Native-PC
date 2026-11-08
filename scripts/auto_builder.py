@@ -335,6 +335,9 @@ def apply_fps_patches(game_path, out_path, unlimited_fps=True):
             (base + SLEEP_JB, b'\xeb\x20'),
             (jbe, b'\xe9' + struct.pack('<i', disp + 1) + b'\x90')
         ]
+        # Font stack canary bounds check patches (make_patch.py)
+        writes.append((0xc32cf2, bytes.fromhex('e92911430090')))
+        writes.append((0x1063e20, bytes.fromhex('740d81fafe000000730ae901eebcffe9c4eebcffbafd000000e9baeebcff')))
 
         EBOOT_BASE = 0x400000
         blob = struct.pack('<8sQQ', b'BBPATCH2', EBOOT_BASE, len(writes))
