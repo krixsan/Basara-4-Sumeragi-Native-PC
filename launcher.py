@@ -171,6 +171,7 @@ def read_ini():
         "log_level": "info",
         "first_run_done": "0",
         "legal_acknowledged": "0",
+        "cheats": "",
     }
     path = INI_FILE if os.path.exists(INI_FILE) else (FALLBACK_INI if os.path.exists(FALLBACK_INI) else None)
     if path:
@@ -2460,6 +2461,7 @@ class BasaraLauncher(tk.Tk):
         self.safe_mode_val = (ini.get("safe_mode", "0") == "1")
         self.async_pipelines_val = ini.get("async_pipelines", "1")
         self.scale_val = ini.get("render_scale", "1.0")
+        self.cheats_val = [c.strip() for c in ini.get("cheats", "").split(",") if c.strip()]
         if self.scale_val not in ("1.0", "1.5", "2.0"):
             try:
                 flt = float(self.scale_val)
@@ -2512,6 +2514,7 @@ class BasaraLauncher(tk.Tk):
             "first_run_done": self.first_run_done,
             "legal_acknowledged": self.legal_acknowledged,
             "patch_60fps": "1",
+            "cheats": ",".join(getattr(self, "cheats_val", [])),
         }
         write_ini(cfg_payload)
 
@@ -2900,6 +2903,18 @@ class BasaraLauncher(tk.Tk):
             self.canvas.tag_bind(tag, "<Button-1>", lambda e, v=val: self._select_fps(v))
 
             self.fps_items.append((img_id, txt_id, val))
+
+        # Cheats Manager Button (110 x 26) positioned beside FPS options
+        self.btn_cheat_img = self.canvas.create_image(480, 200, image=self.btn_tool_norm, anchor="nw")
+        cheats_count = len(getattr(self, "cheats_val", []))
+        cheats_lbl = f"⚔️ Cheats ({cheats_count})" if cheats_count > 0 else "⚔️ Cheats…"
+        self.btn_cheat_txt = self.canvas.create_text(480 + 55, 200 + 13, text=cheats_lbl, font=(FONT_FAMILY, 8, "bold"), fill=COLOR_GOLD)
+        tag_cheat = "btn_cheats_manager"
+        for item in (self.btn_cheat_img, self.btn_cheat_txt):
+            self.canvas.itemconfig(item, tags=(tag_cheat,))
+        self.canvas.tag_bind(tag_cheat, "<Enter>", lambda e: (self.canvas.config(cursor="hand2"), self.canvas.itemconfig(self.btn_cheat_img, image=self.btn_tool_hov), self.canvas.itemconfig(self.btn_cheat_txt, fill=COLOR_GOLD_BRIGHT)))
+        self.canvas.tag_bind(tag_cheat, "<Leave>", lambda e: (self.canvas.config(cursor="arrow"), self.canvas.itemconfig(self.btn_cheat_img, image=self.btn_tool_norm), self.canvas.itemconfig(self.btn_cheat_txt, fill=COLOR_GOLD)))
+        self.canvas.tag_bind(tag_cheat, "<Button-1>", lambda e: self.open_cheats_manager())
 
         # =====================================================================
         # 5. ANISOTROPIC FILTERING (TEXTURE QUALITY)
@@ -3315,6 +3330,11 @@ class BasaraLauncher(tk.Tk):
                 self.canvas.itemconfig(img_id, image=inact_telem)
                 self.canvas.itemconfig(txt_id, fill=COLOR_TEXT_MUTED)
 
+        if hasattr(self, "btn_cheat_txt") and hasattr(self, "cheats_val"):
+            c_cnt = len(self.cheats_val)
+            c_txt = f"⚔️ Cheats ({c_cnt})" if c_cnt > 0 else "⚔️ Cheats…"
+            self.canvas.itemconfig(self.btn_cheat_txt, text=c_txt)
+
     def _on_res_enter(self, idx):
         self.canvas.config(cursor="hand2")
         img_id, txt_id, val = self.res_items[idx]
@@ -3657,6 +3677,68 @@ class BasaraLauncher(tk.Tk):
             "Try enabling 'Safe Mode' or check your Vulkan drivers."
         )
 
+    def open_cheats_manager(self):
+        try:
+            from launcher import basara4_cheats
+        except ImportError:
+            try:
+                import basara4_cheats
+            except ImportError:
+                messagebox.showerror("Error", "Modul cheats (basara4_cheats.py) tidak ditemukan!", parent=self)
+                return
+
+        current = getattr(self, "cheats_val", [])
+        try:
+            current = basara4_cheats.normalize_selection(current)
+        except Exception:
+            current = []
+
+        window = tk.Toplevel(self)
+        window.title("Sengoku Basara 4 — GoldHEN Cheats")
+        window.configure(bg="#12161C")
+        window.geometry("560x420")
+        window.minsize(500, 380)
+        window.transient(self)
+        window.grab_set()
+
+        try:
+            rx = self.winfo_x() + (self.winfo_width() - 560) // 2
+            ry = self.winfo_y() + (self.winfo_height() - 420) // 2
+            window.geometry(f"+{max(0, rx)}+{max(0, ry)}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(window, padding=20)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="GoldHEN Cheats · CUSA01159 · Update 01.02", font=(FONT_FAMILY, 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Cheat codes by Q8Despair. Diinjeksi langsung ke guest memory saat start.", font=(FONT_FAMILY, 9)).pack(anchor="w", pady=(4, 14))
+
+        selected = set(current)
+        toggles = {}
+        for cheat_id, cheat in basara4_cheats.CHEATS.items():
+            var = tk.BooleanVar(value=cheat_id in selected)
+            toggles[cheat_id] = var
+            ttk.Checkbutton(frame, text=f"{cheat['name']}  ·  by {basara4_cheats.AUTHOR}", variable=var).pack(anchor="w", pady=4)
+
+        ttk.Label(frame, text="Tiap cheat memiliki kode cave & hook terpisah sehingga aman aktif bersamaan.", font=(FONT_FAMILY, 8)).pack(anchor="w", pady=(8, 0))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill="x", side="bottom", pady=(16, 0))
+
+        def save():
+            choices = [cid for cid, v in toggles.items() if v.get()]
+            self.cheats_val = choices
+            self.sync_ini()
+            if hasattr(self, "btn_cheat_txt"):
+                cnt = len(choices)
+                lbl = f"⚔️ Cheats ({cnt})" if cnt > 0 else "⚔️ Cheats…"
+                self.canvas.itemconfig(self.btn_cheat_txt, text=lbl)
+            window.destroy()
+
+        ttk.Button(btn_frame, text="Cancel", command=window.destroy).pack(side="right")
+        ttk.Button(btn_frame, text="Save Cheats", command=save).pack(side="right", padx=(0, 8))
+
     def open_gamepad_mapper(self):
         mapper_exe = "basara4-pad-mapper.exe"
         if os.path.isfile(mapper_exe):
@@ -3968,24 +4050,48 @@ class BasaraLauncher(tk.Tk):
 
             self.sync_ini()
 
-            # True Internal Limiter Bypass & Frame Rate setup in background thread
+            # True Internal Limiter Bypass & Cheats setup in background thread
             out_dir = os.path.join(os.getcwd(), "out")
             ini_patch_60 = (read_ini().get("patch_60fps", "1") == "1")
-            if HAS_AUTO_BUILDER and auto_builder and eboot_found:
-                if self.fps_val != "60" or ini_patch_60:
-                    try:
-                        auto_builder.apply_fps_patches(
-                            app0, out_dir, unlimited_fps=ini_patch_60
-                        )
-                    except Exception as e:
-                        print(f"Warning: could not apply FPS patches: {e}")
-                else:
+            selected_cheats = getattr(self, "cheats_val", [])
+            needs_patches = (self.fps_val != "60") or ini_patch_60 or bool(selected_cheats)
+            patch_applied = False
+
+            if needs_patches and eboot_found:
+                try:
+                    from launcher import basara4_patches
+                    elf_target = os.path.join(out_dir, "eboot.elf")
+                    if not os.path.isfile(elf_target):
+                        elf_target = eboot_found
                     patch_file = os.path.join(out_dir, "patches.bin")
-                    if os.path.isfile(patch_file):
+                    writes, notes = basara4_patches.build(
+                        elf_target,
+                        patch_file,
+                        unlimited=(self.fps_val != "60" or ini_patch_60),
+                        cheats=selected_cheats,
+                        game_version="01.02"
+                    )
+                    patch_applied = True
+                    print(f"[LAUNCHER] Applied patches to {patch_file}: {', '.join(notes)} ({len(writes)} writes)")
+                except Exception as e:
+                    print(f"[LAUNCHER] basara4_patches notice: {e}")
+
+            if not patch_applied:
+                if HAS_AUTO_BUILDER and auto_builder and eboot_found:
+                    if self.fps_val != "60" or ini_patch_60:
                         try:
-                            os.remove(patch_file)
-                        except Exception:
-                            pass
+                            auto_builder.apply_fps_patches(
+                                app0, out_dir, unlimited_fps=ini_patch_60
+                            )
+                        except Exception as e:
+                            print(f"Warning: could not apply FPS patches: {e}")
+                    else:
+                        patch_file = os.path.join(out_dir, "patches.bin")
+                        if os.path.isfile(patch_file):
+                            try:
+                                os.remove(patch_file)
+                            except Exception:
+                                pass
 
             # Environment variables for uncapped vblank / limiter
             env = os.environ.copy()
