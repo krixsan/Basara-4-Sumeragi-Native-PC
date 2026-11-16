@@ -129,6 +129,7 @@ typedef struct {
 
     float volume;
     float pitch;
+    double pitch_phase; // 2-point linear pitch interpolation fractional phase
 
     float pcm_ring[NGS2_PCM_RING_FRAMES * 2]; // interleaved stereo float
     uint32_t pcm_write_pos;
@@ -969,6 +970,7 @@ static ABI int32_t ngs2_voice_control(uintptr_t voice, const void *param_list) {
             if (p->eventId == 0) { // Play
                 v->playing = 1;
                 v->paused = 0;
+                v->pitch_phase = 0.0;
                 ngs2_voice_decode_more(v);
                 if (ngs2_hot_trace()) {
                     fprintf(stderr, "  started playing: avail=%u sf_pos=%u stream_size=%zu vol=%.4f\n",
@@ -978,6 +980,7 @@ static ABI int32_t ngs2_voice_control(uintptr_t voice, const void *param_list) {
             } else if (p->eventId == 1) { // Stop
                 v->playing = 0;
                 v->paused = 0;
+                v->pitch_phase = 0.0;
                 v->pcm_avail = 0;
                 v->sf_pos = 0;
                 v->frame_pos = 0;
@@ -1014,6 +1017,18 @@ static inline uint64_t ngs2_now_ns(void) {
     return (uint64_t)t.tv_sec * 1000000000ULL + (uint64_t)t.tv_nsec;
 }
 
+/* High quality soft knee limiter: transparent below threshold (0.7), smooth saturation above. */
+static inline float ngs2_soft_limit(float x) {
+    if (x >= -0.7f && x <= 0.7f) return x;
+    if (x > 0.7f) {
+        float over = x - 0.7f;
+        return 0.7f + 0.295f * tanhf(over / 0.295f);
+    } else {
+        float over = -x - 0.7f;
+        return -(0.7f + 0.295f * tanhf(over / 0.295f));
+    }
+}
+
 static void ngs2_render_quantum_locked(float *out_float, uint32_t num_frames, int *out_active, float *out_peak) {
     if (!out_float || num_frames == 0) return;
 
@@ -1034,26 +1049,53 @@ static void ngs2_render_quantum_locked(float *out_float, uint32_t num_frames, in
 
             // Make sure voice has decoded PCM frames ready
             ngs2_voice_decode_more(v);
-            if (v->pcm_avail == 0) continue;
+            if (v->pcm_avail < 2) continue;
 
             active_voices++;
-            uint32_t frames_to_mix = num_frames < v->pcm_avail ? num_frames : v->pcm_avail;
 
             float vol = (v->volume > 0.0001f) ? v->volume : 1.0f;
-            for (uint32_t f = 0; f < frames_to_mix; ++f) {
-                uint32_t rpos = (v->pcm_read_pos + f) % NGS2_PCM_RING_FRAMES;
-                float l = v->pcm_ring[rpos * 2 + 0] * vol;
-                float r = v->pcm_ring[rpos * 2 + 1] * vol;
+            double step = (double)v->pitch;
+            if (v->sample_rate > 0 && v->sample_rate != 48000) {
+                step *= ((double)v->sample_rate / 48000.0);
+            }
+            if (step <= 0.01) step = 1.0;
+
+            for (uint32_t f = 0; f < num_frames; ++f) {
+                // If ring buffer is getting depleted during high-pitch playback, decode more on the fly
+                if (v->pcm_avail < 4) {
+                    ngs2_voice_decode_more(v);
+                    if (v->pcm_avail < 2) break; // Starved / EOF reached
+                }
+
+                uint32_t i0 = v->pcm_read_pos;
+                uint32_t i1 = (i0 + 1) % NGS2_PCM_RING_FRAMES;
+                float t = (float)v->pitch_phase;
+
+                float l0 = v->pcm_ring[i0 * 2 + 0];
+                float l1 = v->pcm_ring[i1 * 2 + 0];
+                float r0 = v->pcm_ring[i0 * 2 + 1];
+                float r1 = v->pcm_ring[i1 * 2 + 1];
+
+                // 2-point linear interpolation: S(t) = S0 * (1 - t) + S1 * t
+                float l = (l0 * (1.0f - t) + l1 * t) * vol;
+                float r = (r0 * (1.0f - t) + r1 * t) * vol;
 
                 out_float[f * 8 + 0] += l; // Front Left
                 out_float[f * 8 + 1] += r; // Front Right
+
+                // Advance fractional phase by pitch step
+                v->pitch_phase += step;
+                uint32_t advance = (uint32_t)v->pitch_phase;
+                if (advance > 0) {
+                    if (advance > v->pcm_avail) advance = v->pcm_avail;
+                    v->pcm_read_pos = (v->pcm_read_pos + advance) % NGS2_PCM_RING_FRAMES;
+                    v->pcm_avail -= advance;
+                    v->pitch_phase -= (double)advance;
+                }
             }
 
-            v->pcm_read_pos = (v->pcm_read_pos + frames_to_mix) % NGS2_PCM_RING_FRAMES;
-            v->pcm_avail -= frames_to_mix;
-
             // One-Shot EOF: if non-looping voice reached stream end and buffer drained, stop immediately
-            if (!v->has_loop && v->pcm_avail == 0) {
+            if (!v->has_loop && v->pcm_avail < 2) {
                 int channels = v->channels ? v->channels : 2;
                 int atrac9_eof = (v->sf_pos >= v->stream_size);
                 int pcm_eof = (v->frame_pos * (size_t)channels * sizeof(int16_t) >= v->stream_size);
@@ -1064,12 +1106,10 @@ static void ngs2_render_quantum_locked(float *out_float, uint32_t num_frames, in
         }
     }
 
-    // Apply soft limiter / clamp to [-1.0f, 1.0f] and calculate peak
+    // Apply soft limiter to prevent clipping and calculate peak
     for (uint32_t f = 0; f < num_frames; ++f) {
         for (int ch = 0; ch < 2; ++ch) {
-            float s = out_float[f * 8 + ch];
-            if (s > 1.0f) s = 1.0f;
-            else if (s < -1.0f) s = -1.0f;
+            float s = ngs2_soft_limit(out_float[f * 8 + ch]);
             out_float[f * 8 + ch] = s;
             float abs_s = fabsf(s);
             if (abs_s > peak) peak = abs_s;
