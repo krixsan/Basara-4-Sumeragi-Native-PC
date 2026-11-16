@@ -149,6 +149,18 @@ static Port *port_of(int32_t handle, int32_t *error) {
     if (!ports[id].used) { *error=ERR_NOT_OPENED; return NULL; }
     return &ports[id];
 }
+/* High quality soft knee limiter: transparent below threshold (0.7), smooth saturation above.
+ * Prevents harsh digital clipping / square wave distortion when multiple loud SFX sum together. */
+static inline float audio_soft_limit(float x) {
+    if (x >= -0.7f && x <= 0.7f) return x;
+    if (x > 0.7f) {
+        float over = x - 0.7f;
+        return 0.7f + 0.295f * tanhf(over / 0.295f);
+    } else {
+        float over = -x - 0.7f;
+        return -(0.7f + 0.295f * tanhf(over / 0.295f));
+    }
+}
 /* Dedicated feeder: keeps the SDL stream at four periods, takes PCM from the ring, and when the
  * ring runs dry keeps the device fed with silence so WASAPI never tears the stream down. A short
  * ramp stops the transitions from clicking. */
@@ -446,6 +458,8 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
                 L_out = ch[0];
                 R_out = ch[0];
             }
+            L_out = audio_soft_limit(L_out);
+            R_out = audio_soft_limit(R_out);
             stereo[f * 2 + 0] = L_out;
             stereo[f * 2 + 1] = R_out;
             float abs_l = fabsf(L_out);
