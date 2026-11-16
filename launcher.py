@@ -3679,13 +3679,10 @@ class BasaraLauncher(tk.Tk):
 
     def open_cheats_manager(self):
         try:
-            from launcher import basara4_cheats
+            import basara4_cheats
         except ImportError:
-            try:
-                import basara4_cheats
-            except ImportError:
-                messagebox.showerror("Error", "Modul cheats (basara4_cheats.py) tidak ditemukan!", parent=self)
-                return
+            messagebox.showerror("Error", "Modul cheats (basara4_cheats.py) tidak ditemukan!", parent=self)
+            return
 
         current = getattr(self, "cheats_val", [])
         try:
@@ -4059,7 +4056,7 @@ class BasaraLauncher(tk.Tk):
 
             if needs_patches and eboot_found:
                 try:
-                    from launcher import basara4_patches
+                    import basara4_patches
                     elf_target = os.path.join(out_dir, "eboot.elf")
                     if not os.path.isfile(elf_target):
                         elf_target = eboot_found
