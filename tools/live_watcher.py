@@ -142,16 +142,34 @@ TARGET_WATCHES = [
         "original": bytes.fromhex("8990e8000000"),
     },
     {
+        "vaddr": 0x2880AE,
+        "name": "Infinite HP (Force-Max)",
+        "expected_patch": bytes.fromhex("e9ad75de0090909090909090"),
+        "original": bytes.fromhex("c5f857c0c5f82e8360250000"),
+    },
+    {
+        "vaddr": 0x279A10,
+        "name": "Infinite HP (Zero-Dmg)",
+        "expected_patch": bytes.fromhex("e99b5cdf0090909090909090"),
+        "original": bytes.fromhex("c5e25cdac5fa119b60250000"),
+    },
+    {
         "vaddr": 0x27D64A,
-        "name": "Infinite Health (Cave Hook)",
-        "expected_patch": bytes.fromhex("e91120df009090909090909090"),
+        "name": "Infinite HP (Sec NOP)",
+        "expected_patch": bytes.fromhex("90909090909090909090909090"),
         "original": bytes.fromhex("c5ea5cd0c4c17a119760250000"),
     },
     {
         "vaddr": 0x2875D0,
-        "name": "Infinite Health (Sec 1)",
+        "name": "Infinite HP (Sec 1)",
         "expected_patch": bytes.fromhex("9090909090"),
         "original": bytes.fromhex("c5fa5c4328"),
+    },
+    {
+        "vaddr": 0x2F0950,
+        "name": "Infinite Basara & Boost",
+        "expected_patch": bytes.fromhex("e9abedd700909090909090909090909090"),
+        "original": bytes.fromhex("554889e5415741564155415453504989fe"),
     },
 ]
 
@@ -160,7 +178,9 @@ CAVE_WRITES = [
     (0x106F600, bytes.fromhex("c787e80200003f420f00e9a88cfefe")),
     (0x106F620, bytes.fromhex("b8999909008981e4000000e99c194fff")),
     (0x106F640, bytes.fromhex("ba990000008990e8000000e957f04eff")),
-    (0x106F660, bytes.fromhex("c5f857c0c5ea5cd0c4c17a119760250000e9e1df20ff")),
+    (0x106F660, bytes.fromhex("f783a0220000000000087421c5fa10835c250000c5f057c9c5f82ec1760fc5fa118360250000c683ea1c000000c5f857c0c5f82e8360250000e91c8a21ff")),
+    (0x106F6B0, bytes.fromhex("f783a0220000000000087404c5e857d2c5e25cdac5fa119b60250000e94ba320ff")),
+    (0x106F700, bytes.fromhex("554889e5415741564155415453504989fe41f786a022000000000008744241c7865027000000401c4641c7865427000000401c4641c786582700000000803f41c7865c2700000000803f41c786482700000000000041c7864c27000000000000e9fc1128ff")),
 ]
 
 def find_target_process(names=("basara4_pc.exe", "basara_pc.exe")):

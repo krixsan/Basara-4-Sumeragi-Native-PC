@@ -46,22 +46,68 @@ _wrp_hook_bytes = _calc_jump(_wrp_hook, _wrp_cave, 6)
 # Cave: mov edx, 153 (0x99) -> mov [rax+0xe8], edx -> jmp back to 0x55E6A7
 _wrp_cave_bytes = bytes.fromhex("BA990000008990E8000000") + _calc_jump(_wrp_cave + 11, _wrp_hook + 6, 5)
 
-# Infinite Health: Zero Damage Code Cave at 0x106F660
-# Hook at 0x27D64A replaces vsubss (4b) + vmovss [r15+0x2560], xmm2 (9b) = 13 bytes
-_hp_hook = 0x27D64A
+# 1. Infinite Health: Force Max HP Cave (0x106F660) and Hook (0x2880AE)
+# Continuously resets player HP to Max HP every frame & clears death flag
+_hp_hook = 0x2880AE
 _hp_cave = 0x106F660
-_hp_hook_bytes = _calc_jump(_hp_hook, _hp_cave, 13)
-# Cave instructions:
-#   vxorps xmm0, xmm0, xmm0              (4 bytes: C5F857C0)
-#   vsubss xmm2, xmm2, xmm0              (4 bytes: C5EA5CD0)
-#   vmovss [r15+0x2560], xmm2            (9 bytes: C4C17A119760250000)
-#   jmp back to 0x27D657                 (5 bytes: E9...)
-_hp_cave_bytes = (
-    bytes.fromhex("C5F857C0") +
-    bytes.fromhex("C5EA5CD0") +
-    bytes.fromhex("C4C17A119760250000") +
-    _calc_jump(_hp_cave + 17, _hp_hook + 13, 5)
+_hp_cave_code = (
+    bytes.fromhex("F783A022000000000008") + # test dword ptr [rbx+0x22a0], 0x08000000 (10b)
+    bytes.fromhex("7421") +                 # jz .not_player (+33b -> 0x106f68d) (2b)
+    bytes.fromhex("C5FA10835C250000") +     # vmovss xmm0, dword ptr [rbx+0x255c] (8b)
+    bytes.fromhex("C5F057C9") +             # vxorps xmm1, xmm1, xmm1 (4b)
+    bytes.fromhex("C5F82EC1") +             # vucomiss xmm0, xmm1 (4b)
+    bytes.fromhex("760F") +                 # jbe .not_player (+15b -> 0x106f68d) (2b)
+    bytes.fromhex("C5FA118360250000") +     # vmovss dword ptr [rbx+0x2560], xmm0 (8b)
+    bytes.fromhex("C683EA1C000000") +       # mov byte ptr [rbx+0x1cea], 0 (7b)
+    # .not_player (0x106f68d):
+    bytes.fromhex("C5F857C0") +             # vxorps xmm0, xmm0, xmm0 (4b)
+    bytes.fromhex("C5F82E8360250000")       # vucomiss xmm0, dword ptr [rbx+0x2560] (8b)
 )
+_hp_cave_bytes = _hp_cave_code + _calc_jump(_hp_cave + len(_hp_cave_code), _hp_hook + 12, 5)
+_hp_hook_bytes = _calc_jump(_hp_hook, _hp_cave, 12)
+
+# 2. Infinite Health: Zero Damage on Hit Cave (0x106F6B0) and Hook (0x279A10)
+# Zeroes incoming attack damage register xmm2 if actor is player
+_dmg_hook = 0x279A10
+_dmg_cave = 0x106F6B0
+_dmg_cave_code = (
+    bytes.fromhex("F783A022000000000008") + # test dword ptr [rbx+0x22a0], 0x08000000 (10b)
+    bytes.fromhex("7404") +                 # jz .enemy (+4b -> 0x106f6c0) (2b)
+    bytes.fromhex("C5E857D2") +             # vxorps xmm2, xmm2, xmm2 (4b)
+    # .enemy (0x106f6c0):
+    bytes.fromhex("C5E25CDA") +             # vsubss xmm3, xmm3, xmm2 (4b)
+    bytes.fromhex("C5FA119B60250000")       # vmovss dword ptr [rbx+0x2560], xmm3 (8b)
+)
+_dmg_cave_bytes = _dmg_cave_code + _calc_jump(_dmg_cave + len(_dmg_cave_code), _dmg_hook + 12, 5)
+_dmg_hook_bytes = _calc_jump(_dmg_hook, _dmg_cave, 12)
+
+# 3. Infinite Basara & Boost Gauge Cave (0x106F700) and Hook (0x2F0950)
+# Sets Basara points to 10000.0f, ratio to 1.0f (100%), and state to Ready (0)
+_bsr_hook = 0x2F0950
+_bsr_cave = 0x106F700
+_bsr_cave_code = (
+    bytes.fromhex("55") +                     # push rbp (1b)
+    bytes.fromhex("4889E5") +                 # mov rbp, rsp (3b)
+    bytes.fromhex("4157") +                   # push r15 (2b)
+    bytes.fromhex("4156") +                   # push r14 (2b)
+    bytes.fromhex("4155") +                   # push r13 (2b)
+    bytes.fromhex("4154") +                   # push r12 (2b)
+    bytes.fromhex("53") +                     # push rbx (1b)
+    bytes.fromhex("50") +                     # push rax (1b)
+    bytes.fromhex("4989FE") +                 # mov r14, rdi (3b)
+    bytes.fromhex("41F786A022000000000008") + # test dword ptr [r14+0x22a0], 0x08000000 (11b)
+    bytes.fromhex("7442") +                   # jz .not_player (+66b -> 0x106f760) (2b)
+    # Player: Force Max Gauges
+    bytes.fromhex("41C7865027000000401C46") + # mov dword ptr [r14+0x2750], 0x461C4000 (10000.0f) (11b)
+    bytes.fromhex("41C7865427000000401C46") + # mov dword ptr [r14+0x2754], 0x461C4000 (10000.0f) (11b)
+    bytes.fromhex("41C786582700000000803F") + # mov dword ptr [r14+0x2758], 0x3F800000 (1.0f) (11b)
+    bytes.fromhex("41C7865C2700000000803F") + # mov dword ptr [r14+0x275c], 0x3F800000 (1.0f) (11b)
+    bytes.fromhex("41C7864827000000000000") + # mov dword ptr [r14+0x2748], 0 (Ready) (11b)
+    bytes.fromhex("41C7864C27000000000000")   # mov dword ptr [r14+0x274c], 0 (Ready) (11b)
+    # .not_player (0x106f760)
+)
+_bsr_cave_bytes = _bsr_cave_code + _calc_jump(_bsr_cave + len(_bsr_cave_code), _bsr_hook + 17, 5)
+_bsr_hook_bytes = _calc_jump(_bsr_hook, _bsr_cave, 17)
 
 
 CHEATS = {
@@ -114,13 +160,27 @@ CHEATS = {
         ),
     },
     "infinite_health": {
-        "name": "Infinite Health (Zero Damage Code Cave)",
-        "description": "Karakter tidak menerima damage saat diserang (Damage di-zero-kan via Code Cave)",
+        "name": "Infinite Health (Zero Damage & Auto-Heal)",
+        "description": "Karakter tidak menerima damage dan HP dipaksa selalu penuh setiap frame",
         "writes": (
+            # 1. Force Max HP Cave & Hook
             (_hp_cave, _hp_cave_bytes.hex(), "00" * len(_hp_cave_bytes)),
-            (_hp_hook, _hp_hook_bytes.hex(), "C5EA5CD0C4C17A119760250000"),
+            (_hp_hook, _hp_hook_bytes.hex(), "C5F857C0C5F82E8360250000"),
+            # 2. Zero Battle Damage Cave & Hook
+            (_dmg_cave, _dmg_cave_bytes.hex(), "00" * len(_dmg_cave_bytes)),
+            (_dmg_hook, _dmg_hook_bytes.hex(), "C5E25CDAC5FA119B60250000"),
+            # 3. Secondary Damage Routines NOPed
+            (0x27D64A, "90" * 13, "C5EA5CD0C4C17A119760250000"),
             (0x2875D0, "9090909090", "C5FA5C4328"),
             (0x266DC7, "9090909090", "C5FA5C4328"),
+        ),
+    },
+    "infinite_basara": {
+        "name": "Infinite Basara & Boost Gauge",
+        "description": "Basara Gauge dan Boost (Iki) Gauge selalu penuh 100% dan siap dipakai kapan saja",
+        "writes": (
+            (_bsr_cave, _bsr_cave_bytes.hex(), "00" * len(_bsr_cave_bytes)),
+            (_bsr_hook, _bsr_hook_bytes.hex(), "554889E5415741564155415453504989FE"),
         ),
     },
 }
