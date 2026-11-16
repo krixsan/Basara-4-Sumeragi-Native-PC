@@ -53,6 +53,7 @@ CHEATS = {
         "name": "Growth Points Won't Decrease",
         "description": "Poin pertumbuhan karakter tidak berkurang saat upgrade level/stats",
         "writes": (
+            (0x5026D8, "90909090909090", "412985B4060000"),
             (0x5028D4, "90909090909090", "412985B4060000"),
         ),
     },
@@ -70,6 +71,13 @@ CHEATS = {
         "writes": (
             (_wrp_cave, _wrp_cave_bytes.hex(), "00" * len(_wrp_cave_bytes)),
             (_wrp_hook, _wrp_hook_bytes.hex(), "8990E8000000"),
+        ),
+    },
+    "infinite_health": {
+        "name": "Infinite Health (Damage Reduction Bypass)",
+        "description": "Mencegah pengurangan HP karakter saat menerima serangan musuh",
+        "writes": (
+            (0x27D64A, "90909090", "C5EA5CD0"),
         ),
     },
 }
