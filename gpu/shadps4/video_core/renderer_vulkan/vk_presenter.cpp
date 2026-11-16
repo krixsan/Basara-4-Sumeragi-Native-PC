@@ -612,6 +612,25 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
 
+    // Live AMD FSR 1.0 (EASU + RCAS) settings from BbSettings (basara.ini / launcher)
+    const auto& bb_settings = BbSettings::Get();
+    const int mode = bb_settings.fsr_mode.load(std::memory_order_relaxed);
+    if (mode == BbSettings::FsrModeFsr1) {
+        fsr_settings.enable = true;
+        fsr_settings.use_rcas = bb_settings.rcas.load(std::memory_order_relaxed);
+    } else if (mode == BbSettings::FsrModeRcasOnly) {
+        fsr_settings.enable = false;
+        fsr_settings.use_rcas = true;
+    } else if (mode == BbSettings::FsrModeNative) {
+        fsr_settings.enable = false;
+        fsr_settings.use_rcas = false;
+    } else {
+        fsr_settings.enable = bb_settings.fsr1.load(std::memory_order_relaxed);
+        fsr_settings.use_rcas = bb_settings.rcas.load(std::memory_order_relaxed);
+    }
+    const int rcas_str = std::clamp(bb_settings.rcas_strength.load(std::memory_order_relaxed), 0, 100);
+    fsr_settings.rcas_attenuation = 2.0f * (1.0f - static_cast<float>(rcas_str) / 100.0f);
+
     // Numbered here, in command order; marked where the commands are recorded.
     const u32 stream = draw_scheduler.CrumbStream();
     const bool crumbs = Breadcrumbs::Enabled();

@@ -132,11 +132,12 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
 vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                               vk::Extent2D input_size, vk::Extent2D output_size, Settings settings,
                               bool hdr) {
-    if (!settings.enable) {
-        DebugState.is_using_fsr = false;
-        return input;
-    }
-    if (input_size.width >= output_size.width && input_size.height >= output_size.height) {
+    // AMD FSR 1.0 (EASU spatial upscaling when output > input; RCAS sharpening at native or after EASU)
+    const bool upscale = (input_size.width < output_size.width && input_size.height < output_size.height);
+    const bool same = (input_size.width == output_size.width && input_size.height == output_size.height);
+    const bool runs = (settings.enable && upscale) || (settings.use_rcas && same);
+
+    if (!runs) {
         DebugState.is_using_fsr = false;
         return input;
     }

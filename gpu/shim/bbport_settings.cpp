@@ -86,6 +86,22 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fullscreen = i != 0;
     } else if (key == "anisotropy") {
         v.anisotropy = std::clamp(i, 0, 16);
+    } else if (key == "fsr_mode") {
+        std::string lower = value;
+        for (char& c : lower) c = (char)::tolower(c);
+        if (lower == "fsr1" || lower == "1") {
+            v.fsr_mode = FsrModeFsr1;
+            v.fsr1 = true;
+            v.rcas = true;
+        } else if (lower == "rcas_only" || lower == "rcas" || lower == "2") {
+            v.fsr_mode = FsrModeRcasOnly;
+            v.fsr1 = false;
+            v.rcas = true;
+        } else if (lower == "native" || lower == "off" || lower == "0") {
+            v.fsr_mode = FsrModeNative;
+            v.fsr1 = false;
+            v.rcas = false;
+        }
     } else if (key == "fsr1") {
         v.fsr1 = i != 0;
     } else if (key == "rcas") {
@@ -388,6 +404,10 @@ void Save() {
     put("msaa", flag(v.msaa));
     put("fullscreen", flag(v.fullscreen));
     put("anisotropy", std::to_string(v.anisotropy.load()));
+    const char* fsr_mode_str = "fsr1";
+    if (v.fsr_mode == FsrModeRcasOnly) fsr_mode_str = "rcas_only";
+    else if (v.fsr_mode == FsrModeNative || (!v.fsr1 && !v.rcas)) fsr_mode_str = "native";
+    put("fsr_mode", fsr_mode_str);
     put("fsr1", flag(v.fsr1));
     put("rcas", flag(v.rcas));
     put("rcas_strength", std::to_string(v.rcas_strength.load()));

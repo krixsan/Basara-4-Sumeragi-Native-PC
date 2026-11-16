@@ -2453,7 +2453,13 @@ class BasaraLauncher(tk.Tk):
         self.res_val = ini.get("output_res", "1920x1080")
         self.fps_val = ini.get("fps_limit", "144")
         self.aniso_val = ini.get("anisotropy", "16")
-        self.fsr_val = (ini.get("fsr1", "1") == "1")
+        fsr_mode_ini = ini.get("fsr_mode", "").lower()
+        if fsr_mode_ini == "native":
+            self.fsr_val = False
+        elif fsr_mode_ini in ("fsr1", "rcas_only"):
+            self.fsr_val = True
+        else:
+            self.fsr_val = (ini.get("fsr1", "1") == "1")
         self.fullscreen_val = (ini.get("fullscreen", "1") == "1")
         self.skip_intro_val = (ini.get("skip_intro", "0") == "1")
         self.show_fps_val = (ini.get("show_fps", "1") == "1")
@@ -2501,6 +2507,7 @@ class BasaraLauncher(tk.Tk):
             "fullscreen": "1" if self.fullscreen_val else "0",
             "fps_limit": self.fps_val,
             "anisotropy": self.aniso_val,
+            "fsr_mode": "fsr1" if self.fsr_val else "native",
             "fsr1": "1" if self.fsr_val else "0",
             "rcas": "1" if self.fsr_val else "0",
             "rcas_strength": str(self.sharp_val),

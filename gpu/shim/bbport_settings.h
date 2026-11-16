@@ -19,6 +19,7 @@ inline bool IsFsr4(int upscaler) {
 }
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
+enum FsrMode : int { FsrModeNative = 0, FsrModeFsr1 = 1, FsrModeRcasOnly = 2 };
 enum class MenuLanguage { English, Russian, Spanish };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
@@ -138,6 +139,7 @@ struct Values {
     std::atomic<bool> fsr1{true};
     std::atomic<bool> rcas{true};
     std::atomic<int> rcas_strength{75};
+    std::atomic<int> fsr_mode{FsrModeFsr1};
     /// v2.1: Custom render resolution scale multiplier (0.5-2.0x, 1.0=native)
     std::atomic<float> render_scale{1.0f};
     /// v2.1: Post-process anti-aliasing (0=off, 1=fxaa, 2=msaa2x, 4=msaa4x)
