@@ -46,6 +46,23 @@ _wrp_hook_bytes = _calc_jump(_wrp_hook, _wrp_cave, 6)
 # Cave: mov edx, 153 (0x99) -> mov [rax+0xe8], edx -> jmp back to 0x55E6A7
 _wrp_cave_bytes = bytes.fromhex("BA990000008990E8000000") + _calc_jump(_wrp_cave + 11, _wrp_hook + 6, 5)
 
+# Infinite Health: Zero Damage Code Cave at 0x106F660
+# Hook at 0x27D64A replaces vsubss (4b) + vmovss [r15+0x2560], xmm2 (9b) = 13 bytes
+_hp_hook = 0x27D64A
+_hp_cave = 0x106F660
+_hp_hook_bytes = _calc_jump(_hp_hook, _hp_cave, 13)
+# Cave instructions:
+#   vxorps xmm0, xmm0, xmm0              (4 bytes: C5F857C0)
+#   vsubss xmm2, xmm2, xmm0              (4 bytes: C5EA5CD0)
+#   vmovss [r15+0x2560], xmm2            (9 bytes: C4C17A119760250000)
+#   jmp back to 0x27D657                 (5 bytes: E9...)
+_hp_cave_bytes = (
+    bytes.fromhex("C5F857C0") +
+    bytes.fromhex("C5EA5CD0") +
+    bytes.fromhex("C4C17A119760250000") +
+    _calc_jump(_hp_cave + 17, _hp_hook + 13, 5)
+)
+
 
 CHEATS = {
     "gold": {
@@ -97,10 +114,13 @@ CHEATS = {
         ),
     },
     "infinite_health": {
-        "name": "Infinite Health (Damage Reduction Bypass)",
-        "description": "Mencegah pengurangan HP karakter saat menerima serangan musuh",
+        "name": "Infinite Health (Zero Damage Code Cave)",
+        "description": "Karakter tidak menerima damage saat diserang (Damage di-zero-kan via Code Cave)",
         "writes": (
-            (0x27D64A, "90909090", "C5EA5CD0"),
+            (_hp_cave, _hp_cave_bytes.hex(), "00" * len(_hp_cave_bytes)),
+            (_hp_hook, _hp_hook_bytes.hex(), "C5EA5CD0C4C17A119760250000"),
+            (0x2875D0, "9090909090", "C5FA5C4328"),
+            (0x266DC7, "9090909090", "C5FA5C4328"),
         ),
     },
 }

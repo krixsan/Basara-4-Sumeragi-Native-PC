@@ -143,9 +143,15 @@ TARGET_WATCHES = [
     },
     {
         "vaddr": 0x27D64A,
-        "name": "Infinite Health (Damage)",
-        "expected_patch": bytes.fromhex("90909090"),
-        "original": bytes.fromhex("c5ea5cd0"),
+        "name": "Infinite Health (Cave Hook)",
+        "expected_patch": bytes.fromhex("e91120df009090909090909090"),
+        "original": bytes.fromhex("c5ea5cd0c4c17a119760250000"),
+    },
+    {
+        "vaddr": 0x2875D0,
+        "name": "Infinite Health (Sec 1)",
+        "expected_patch": bytes.fromhex("9090909090"),
+        "original": bytes.fromhex("c5fa5c4328"),
     },
 ]
 
@@ -154,6 +160,7 @@ CAVE_WRITES = [
     (0x106F600, bytes.fromhex("c787e80200003f420f00e9a88cfefe")),
     (0x106F620, bytes.fromhex("b8999909008981e4000000e99c194fff")),
     (0x106F640, bytes.fromhex("ba990000008990e8000000e957f04eff")),
+    (0x106F660, bytes.fromhex("c5f857c0c5ea5cd0c4c17a119760250000e9e1df20ff")),
 ]
 
 def find_target_process(names=("basara4_pc.exe", "basara_pc.exe")):
