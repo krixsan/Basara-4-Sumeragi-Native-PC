@@ -770,8 +770,19 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
             if (value<base || !mapped(segments,ns,value-base,1)) fail("patch writes a pointer outside the image");
             slots[nslots++]=target;
         }
-        printf("[PATCH #%" PRIu64 "] offset=0x%" PRIx64 " len=%" PRIu64 "\n  BEFORE: ", i, offset, length);
-        for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+        if (offset == 0x27D64A || offset == 0x529A86 || offset == 0x56950A) {
+            const char *cheat_desc = (offset == 0x27D64A) ? "Infinite Health" :
+                                     (offset == 0x529A86) ? "Gold (Shop)" : "Gold (Weapon)";
+            printf(">>> [LIVE DEBUG] Target=0x%" PRIx64 " (%s)\n  BEFORE: ", offset, cheat_desc);
+            for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+            printf("\n");
+            LOG_INFO("cheat", "[LIVE DEBUG] Target=0x%" PRIx64 " (%s) BEFORE: %02x %02x %02x %02x",
+                     offset, cheat_desc, image[offset], image[offset+1], image[offset+2], image[offset+3]);
+        } else {
+            printf("[PATCH #%" PRIu64 "] offset=0x%" PRIx64 " len=%" PRIu64 "\n  BEFORE: ", i, offset, length);
+            for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+            printf("\n");
+        }
         memcpy(image+offset,data,length);
         for (size_t s=0;s<nslots;++s) {
             uint64_t value;
@@ -779,9 +790,17 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
             value=(uint64_t)(uintptr_t)image+(value-base);
             memcpy(image+slots[s],&value,8);
         }
-        printf("\n  AFTER:  ");
-        for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
-        printf("\n");
+        if (offset == 0x27D64A || offset == 0x529A86 || offset == 0x56950A) {
+            printf("  AFTER:  ");
+            for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+            printf("\n");
+            LOG_INFO("cheat", "[LIVE DEBUG] Target=0x%" PRIx64 " AFTER: %02x %02x %02x %02x",
+                     offset, image[offset], image[offset+1], image[offset+2], image[offset+3]);
+        } else {
+            printf("  AFTER:  ");
+            for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+            printf("\n");
+        }
         fflush(stdout);
         rebased+=nslots;
         bytes+=length;
