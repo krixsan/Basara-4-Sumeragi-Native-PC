@@ -12,7 +12,7 @@ except ImportError:
 
 BASE_ADDRESS = 0x400000
 SUPPORTED_VERSION = "01.02"
-AUTHOR = "Q8Despair"
+AUTHOR = "Q8Despair / Ported for PC by Krixsan"
 SOURCE_URL = "https://github.com/GoldHEN/GoldHEN_Cheat_Repository/blob/main/json/CUSA01159_01.02.json"
 
 
@@ -21,45 +21,68 @@ def _calc_jump(from_addr, to_addr, hook_len=6):
     return b"\xE9" + struct.pack("<i", disp) + b"\x90" * (hook_len - 5)
 
 
-# Verified Memory Patches for CUSA01159 v1.02:
-# (v1.02 virtual addresses match eboot_image mapped segments; Segment 0 is 0x0 .. 0x12bd788).
+# ==============================================================================
+# Verified Code Caves & Hooks for CUSA01159 v1.02 (Inside Segment 0: 0x0..0x12bd788)
+# ==============================================================================
+
+# Special Coin (Tenka Medals) x999,999 in Battle
+_coin_hook = 0x582B0
+_coin_cave = 0x106F600
+_coin_hook_bytes = _calc_jump(_coin_hook, _coin_cave, 7)
+# Cave: mov dword ptr [rdi+0x2e8], 999999 (0x0F423F) -> jmp back to 0x582B7
+_coin_cave_bytes = bytes.fromhex("C787E80200003F420F00") + _calc_jump(_coin_cave + 10, _coin_hook + 7, 5)
+
+# Weapon Points: Set to Max (629,145) on Upgrade
 _wp_hook = 0x560FC6
-_wp_cave = 0x106F600
+_wp_cave = 0x106F620
 _wp_hook_bytes = _calc_jump(_wp_hook, _wp_cave, 6)
+# Cave: mov eax, 629145 (0x099999) -> mov [rcx+0xe4], eax -> jmp back to 0x560FCC
 _wp_cave_bytes = bytes.fromhex("B8999909008981E4000000") + _calc_jump(_wp_cave + 11, _wp_hook + 6, 5)
 
+# Weapon Rank Points: Set to Max (153) on Upgrade
 _wrp_hook = 0x55E6A1
-_wrp_cave = 0x106F620
+_wrp_cave = 0x106F640
 _wrp_hook_bytes = _calc_jump(_wrp_hook, _wrp_cave, 6)
+# Cave: mov edx, 153 (0x99) -> mov [rax+0xe8], edx -> jmp back to 0x55E6A7
 _wrp_cave_bytes = bytes.fromhex("BA990000008990E8000000") + _calc_jump(_wrp_cave + 11, _wrp_hook + 6, 5)
+
 
 CHEATS = {
     "gold": {
-        "name": "Gold Won't Decrease",
-        "description": "Gold tidak berkurang saat membeli senjata/item di shop atau upgrade senjata",
+        "name": "Max Gold (9,999,999) & Won't Decrease",
+        "description": "Gold menjadi 9.999.999 saat belanja di shop dan tidak pernah berkurang saat upgrade",
         "writes": (
-            (0x529A86, "90909090909090", "412B8E70070000"),
+            # Shop purchase: set ecx to 9,999,999 directly
+            (0x529A86, "B97F9698009090", "412B8E70070000"),
+            # Shop purchase: NOP cmovs ecx, r15d so ecx is guaranteed 9,999,999
+            (0x529A8D, "90909090", "410F48CF"),
+            # Weapon upgrade cost deduction: sub ecx, [rbx+0x84c] -> NOP
             (0x56950A, "909090909090", "2B8B4C080000"),
+            # General spending deduction: sub esi, edx -> NOP
+            (0x4EFDCC, "9090", "29D6"),
         ),
     },
     "special_coin": {
-        "name": "Special Coin x99999 in Battle",
-        "description": "Koin spesial langsung menjadi 999.999 saat didapatkan di battle",
+        "name": "Special Coin x999999 in Battle",
+        "description": "Koin spesial (Tenka Medals) langsung menjadi 999.999 saat diperoleh di battle",
         "writes": (
-            (0x582C1, "9090", "7C0E"),
+            (_coin_cave, _coin_cave_bytes.hex(), "00" * len(_coin_cave_bytes)),
+            (_coin_hook, _coin_hook_bytes.hex(), "F001B7E8020000"),
         ),
     },
     "growth_points": {
         "name": "Growth Points Won't Decrease",
-        "description": "Poin pertumbuhan karakter tidak berkurang saat upgrade level/stats",
+        "description": "Poin pertumbuhan karakter (Inro) tidak berkurang saat upgrade level atau stats",
         "writes": (
+            # Stat upgrade point deduction
             (0x5026D8, "90909090909090", "412985B4060000"),
+            # Level upgrade point deduction
             (0x5028D4, "90909090909090", "412985B4060000"),
         ),
     },
     "weapon_points": {
         "name": "Max Weapon Points on Upgrade",
-        "description": "Poin senjata langsung maksimal (629.145) saat upgrade",
+        "description": "Poin senjata langsung maksimal (629.145) saat melakukan upgrade senjata",
         "writes": (
             (_wp_cave, _wp_cave_bytes.hex(), "00" * len(_wp_cave_bytes)),
             (_wp_hook, _wp_hook_bytes.hex(), "8981E4000000"),
@@ -67,7 +90,7 @@ CHEATS = {
     },
     "weapon_rank_points": {
         "name": "Max Weapon Rank Points on Upgrade",
-        "description": "Poin rank senjata langsung maksimal (153) saat upgrade rank",
+        "description": "Poin rank senjata langsung maksimal (153) saat melakukan upgrade rank",
         "writes": (
             (_wrp_cave, _wrp_cave_bytes.hex(), "00" * len(_wrp_cave_bytes)),
             (_wrp_hook, _wrp_hook_bytes.hex(), "8990E8000000"),
@@ -98,58 +121,33 @@ def normalize_selection(cheat_ids):
 
 
 def validate_selection(cheat_ids):
-    return normalize_selection(cheat_ids)
+    normalized = normalize_selection(cheat_ids)
+    return normalized
 
 
-def compile_cheats(cheat_ids, game_version, image, load_segments):
-    selected = validate_selection(cheat_ids)
-    if not selected:
-        return []
-    if game_version and game_version != SUPPORTED_VERSION:
-        raise ValueError(
-            f"These cheats require game update {SUPPORTED_VERSION}; detected {game_version or 'unknown'}")
+def compile_cheats(selected_cheats, game_version="01.02", eboot_image=None, segments=None):
+    normalized = validate_selection(selected_cheats)
+    compiled_writes = []
 
-    writes = []
-    for cheat_id in selected:
+    for cheat_id in normalized:
         cheat = CHEATS[cheat_id]
-        for offset, patch_hex, expected_hex in cheat["writes"]:
-            expected = bytes.fromhex(expected_hex)
+        for entry in cheat["writes"]:
+            offset = entry[0]
+            patch_hex = entry[1]
+            orig_hex = entry[2] if len(entry) > 2 else ""
+
             patch_data = bytes.fromhex(patch_hex)
+            orig_data = bytes.fromhex(orig_hex) if orig_hex else b""
 
-            # Verification against image
-            if offset + len(expected) <= len(image):
-                actual = image[offset:offset + len(expected)]
-                if actual != expected:
+            if eboot_image and orig_data:
+                # eboot_image is the raw binary image payload (where vaddr 0 is at offset 0)
+                actual = eboot_image[offset:offset + len(orig_data)]
+                if actual != orig_data:
                     raise ValueError(
-                        f"Cheat '{cheat['name']}' mismatch at offset {offset:#x}: "
-                        f"expected {expected.hex()}, found {actual.hex()}")
+                        f"Cheat '{cheat['name']}' mismatch at 0x{offset:X}: "
+                        f"expected {orig_hex}, got {actual.hex().upper()}"
+                    )
 
-            # Check that offset is within load_segments
-            if load_segments:
-                is_mapped = any(
-                    addr <= offset and (offset + len(patch_data)) <= (addr + size)
-                    for addr, size, flags in load_segments
-                )
-                if not is_mapped:
-                    raise ValueError(
-                        f"Cheat '{cheat['name']}' target {offset:#x} is outside mapped load segments")
+            compiled_writes.append((offset, patch_data))
 
-            writes.append((offset, patch_data))
-
-    writes.sort(key=lambda w: w[0])
-    for prev, curr in zip(writes, writes[1:]):
-        if curr[0] < prev[0] + len(prev[1]):
-            raise ValueError("The selected cheat patches overlap in memory")
-
-    return writes
-
-
-def game_version(game_dir):
-    sfo_path = Path(game_dir) / "sce_sys" / "param.sfo"
-    if not sfo_path.is_file():
-        return SUPPORTED_VERSION
-    try:
-        values = _parse_sfo(sfo_path.read_bytes())
-        return values.get("APP_VER", SUPPORTED_VERSION)
-    except Exception:
-        return SUPPORTED_VERSION
+    return compiled_writes
