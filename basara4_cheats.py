@@ -36,9 +36,10 @@ _wrp_cave_bytes = bytes.fromhex("BA990000008990E8000000") + _calc_jump(_wrp_cave
 CHEATS = {
     "gold": {
         "name": "Gold Won't Decrease",
-        "description": "Gold tidak berkurang saat membeli senjata/item di shop",
+        "description": "Gold tidak berkurang saat membeli senjata/item di shop atau upgrade senjata",
         "writes": (
             (0x529A86, "90909090909090", "412B8E70070000"),
+            (0x56950A, "909090909090", "2B8B4C080000"),
         ),
     },
     "special_coin": {

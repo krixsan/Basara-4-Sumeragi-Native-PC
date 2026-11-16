@@ -770,6 +770,8 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
             if (value<base || !mapped(segments,ns,value-base,1)) fail("patch writes a pointer outside the image");
             slots[nslots++]=target;
         }
+        printf("[PATCH #%" PRIu64 "] offset=0x%" PRIx64 " len=%" PRIu64 "\n  BEFORE: ", i, offset, length);
+        for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
         memcpy(image+offset,data,length);
         for (size_t s=0;s<nslots;++s) {
             uint64_t value;
@@ -777,6 +779,10 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
             value=(uint64_t)(uintptr_t)image+(value-base);
             memcpy(image+slots[s],&value,8);
         }
+        printf("\n  AFTER:  ");
+        for (uint64_t b=0; b<length && b<16; ++b) printf("%02x ", image[offset+b]);
+        printf("\n");
+        fflush(stdout);
         rebased+=nslots;
         bytes+=length;
     }
