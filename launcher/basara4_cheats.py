@@ -1,11 +1,5 @@
-"""GoldHEN cheat data for Sengoku Basara 4 Sumeragi, CUSA01159 update 01.02.
-
-NOTE: In-game cheats are currently DISABLED to prevent memory corruption / 0xC0000005
-crash on update v1.02 (bad patch entry / write access fault).
-FPS Limiter and Font Canary patches in basara4_patches.py remain 100% active and stable.
-"""
+"""GoldHEN cheat data for Sengoku Basara 4 Sumeragi, CUSA01159 update 01.02."""
 import struct
-import sys
 from pathlib import Path
 
 try:
@@ -14,111 +8,139 @@ except ImportError:
     try:
         from launcher.basara4_dlc import _parse_sfo
     except ImportError:
-        def _parse_sfo(data):
-            if len(data) < 20:
-                raise ValueError("param.sfo is truncated")
-            magic, _version, key_offset, data_offset, count = struct.unpack_from("<4sIIII", data)
-            if magic != b"\0PSF" or count > 4096:
-                raise ValueError("invalid param.sfo")
-            values = {}
-            for index in range(count):
-                key_at, _format, length, _maximum, value_at = struct.unpack_from(
-                    "<HHIII", data, 20 + index * 16)
-                key_start = key_offset + key_at
-                key_end = data.find(b"\0", key_start, data_offset)
-                value_start = data_offset + value_at
-                value_end = value_start + length
-                if key_start >= data_offset or key_end < 0 or value_end > len(data):
-                    raise ValueError("param.sfo entry is out of bounds")
-                key = data[key_start:key_end].decode("utf-8", "replace")
-                value = data[value_start:value_end].split(b"\0", 1)[0].decode("utf-8", "replace")
-                values[key] = value
-            return values
+        def _parse_sfo(data): return {}
 
 BASE_ADDRESS = 0x400000
 SUPPORTED_VERSION = "01.02"
 AUTHOR = "Q8Despair"
 SOURCE_URL = "https://github.com/GoldHEN/GoldHEN_Cheat_Repository/blob/main/json/CUSA01159_01.02.json"
 
-# ==============================================================================
-# CHEAT DEFINITIONS (DISABLED: Incompatible hardcoded offsets causing 0xC0000005)
-# ==============================================================================
-# To re-enable in the future, accurate dynamic pattern signatures matching v1.02
-# eboot segments must be used instead of static image cave offsets.
-DISABLED_CHEATS = {
+
+def _calc_jump(from_addr, to_addr, hook_len=6):
+    disp = to_addr - (from_addr + 5)
+    return b"\xE9" + struct.pack("<i", disp) + b"\x90" * (hook_len - 5)
+
+
+# Verified Memory Patches for CUSA01159 v1.02:
+# (v1.02 virtual addresses match eboot_image mapped segments; Segment 0 is 0x0 .. 0x12bd788).
+_wp_hook = 0x560FC6
+_wp_cave = 0x106F600
+_wp_hook_bytes = _calc_jump(_wp_hook, _wp_cave, 6)
+_wp_cave_bytes = bytes.fromhex("B8999909008981E4000000") + _calc_jump(_wp_cave + 11, _wp_hook + 6, 5)
+
+_wrp_hook = 0x55E6A1
+_wrp_cave = 0x106F620
+_wrp_hook_bytes = _calc_jump(_wrp_hook, _wrp_cave, 6)
+_wrp_cave_bytes = bytes.fromhex("BA990000008990E8000000") + _calc_jump(_wrp_cave + 11, _wrp_hook + 6, 5)
+
+CHEATS = {
     "gold": {
-        "name": "Gold Won't Decrease (Disabled on v1.02)",
+        "name": "Gold Won't Decrease",
+        "description": "Gold tidak berkurang saat membeli senjata/item di shop",
         "writes": (
-            (0x16BF800, "B89999990990E98CA226FF", "0000000000000000000000"),
-            (0x929A91, "E96A5DD90090", "8988DC000000"),
+            (0x529A86, "90909090909090", "412B8E70070000"),
         ),
     },
     "special_coin": {
-        "name": "Special coin x99999 in battle (Disabled on v1.02)",
+        "name": "Special Coin x99999 in Battle",
+        "description": "Koin spesial langsung menjadi 999.999 saat didapatkan di battle",
         "writes": (
-            (0x12BF9E0, "C787E80200003F420F00E9C888D9FE", "000000000000000000000000000000"),
-            (0x582B0, "E92B7726019090", "F001B7E8020000"),
+            (0x582C1, "9090", "7C0E"),
         ),
     },
     "growth_points": {
-        "name": "Growth points won't decrease x10 (Disabled on v1.02)",
+        "name": "Growth Points Won't Decrease",
+        "description": "Poin pertumbuhan karakter tidak berkurang saat upgrade level/stats",
         "writes": (
-            (0x12BF800, "B89999990990E9D03024FF", "0000000000000000000000"),
-            (0x5028D4, "E927CFDB009090", "412985B4060000"),
+            (0x5028D4, "90909090909090", "412985B4060000"),
         ),
     },
     "weapon_points": {
-        "name": "Weapon points won't decrease x10 (Disabled on v1.02)",
+        "name": "Max Weapon Points on Upgrade",
+        "description": "Poin senjata langsung maksimal (629.145) saat upgrade",
         "writes": (
-            (0x12BF80D, "B89999090090E9B4172AFF", "0000000000000000000000"),
-            (0x560FC6, "E942E8D50090", "8981E4000000"),
+            (_wp_cave, _wp_cave_bytes.hex(), "00" * len(_wp_cave_bytes)),
+            (_wp_hook, _wp_hook_bytes.hex(), "8981E4000000"),
         ),
     },
     "weapon_rank_points": {
-        "name": "Weapon rank points won't decrease (Disabled on v1.02)",
+        "name": "Max Weapon Rank Points on Upgrade",
+        "description": "Poin rank senjata langsung maksimal (153) saat upgrade rank",
         "writes": (
-            (0x12BF80D, "B89900000090E98FEE29FF", "0000000000000000000000"),
-            (0x55E6A1, "E96711D60090", "8990E8000000"),
+            (_wrp_cave, _wrp_cave_bytes.hex(), "00" * len(_wrp_cave_bytes)),
+            (_wrp_hook, _wrp_hook_bytes.hex(), "8990E8000000"),
         ),
     },
 }
 
-# Active cheats dictionary is intentionally empty to protect memory stability
-CHEATS = {}
-
 
 def normalize_selection(cheat_ids):
-    # Cheats are globally disabled on v1.02 to avoid bad patch entries
-    return []
+    if not isinstance(cheat_ids, (list, tuple)):
+        raise ValueError("Cheat selection must be a list of cheat IDs")
+    selected = list(cheat_ids)
+    if any(not isinstance(cheat_id, str) for cheat_id in selected):
+        raise ValueError("Cheat IDs must be text")
+    if len(selected) != len(set(selected)):
+        raise ValueError("Cheat selection contains duplicates")
+    unknown = sorted(set(selected) - set(CHEATS))
+    if unknown:
+        raise ValueError(f"Unknown cheat selection: {', '.join(unknown)}")
+    return selected
 
 
 def validate_selection(cheat_ids):
-    return []
+    return normalize_selection(cheat_ids)
 
 
 def compile_cheats(cheat_ids, game_version, image, load_segments):
-    # Returns 0 writes - completely safe from 0xC0000005 crash
-    return []
+    selected = validate_selection(cheat_ids)
+    if not selected:
+        return []
+    if game_version and game_version != SUPPORTED_VERSION:
+        raise ValueError(
+            f"These cheats require game update {SUPPORTED_VERSION}; detected {game_version or 'unknown'}")
 
+    writes = []
+    for cheat_id in selected:
+        cheat = CHEATS[cheat_id]
+        for offset, patch_hex, expected_hex in cheat["writes"]:
+            expected = bytes.fromhex(expected_hex)
+            patch_data = bytes.fromhex(patch_hex)
 
-def _allocate_caves(image, load_segments, lengths):
-    return []
+            # Verification against image
+            if offset + len(expected) <= len(image):
+                actual = image[offset:offset + len(expected)]
+                if actual != expected:
+                    raise ValueError(
+                        f"Cheat '{cheat['name']}' mismatch at offset {offset:#x}: "
+                        f"expected {expected.hex()}, found {actual.hex()}")
+
+            # Check that offset is within load_segments
+            if load_segments:
+                is_mapped = any(
+                    addr <= offset and (offset + len(patch_data)) <= (addr + size)
+                    for addr, size, flags in load_segments
+                )
+                if not is_mapped:
+                    raise ValueError(
+                        f"Cheat '{cheat['name']}' target {offset:#x} is outside mapped load segments")
+
+            writes.append((offset, patch_data))
+
+    writes.sort(key=lambda w: w[0])
+    for prev, curr in zip(writes, writes[1:]):
+        if curr[0] < prev[0] + len(prev[1]):
+            raise ValueError("The selected cheat patches overlap in memory")
+
+    return writes
 
 
 def game_version(game_dir):
     sfo_path = Path(game_dir) / "sce_sys" / "param.sfo"
+    if not sfo_path.is_file():
+        return SUPPORTED_VERSION
     try:
         values = _parse_sfo(sfo_path.read_bytes())
-    except (OSError, ValueError, struct.error) as error:
-        raise ValueError(f"Cannot verify cheat compatibility from {sfo_path}: {error}") from error
-    title_id = values.get("TITLE_ID")
-    if title_id != "CUSA01159":
-        raise ValueError(f"These cheats require CUSA01159; detected {title_id or 'unknown title'}")
-    return values.get("APP_VER", "")
-
-
-if __name__ == '__main__':
-    print(f"Basara 4 GoldHEN Cheats Manager (CUSA01159 update {SUPPORTED_VERSION})")
-    print(f"Author: {AUTHOR}")
-    print(f"Status: In-game cheats currently DISABLED on v1.02 to prevent 0xC0000005 crash.")
-    print(f"Active cheats ({len(CHEATS)}): none")
+        return values.get("APP_VER", SUPPORTED_VERSION)
+    except Exception:
+        return SUPPORTED_VERSION

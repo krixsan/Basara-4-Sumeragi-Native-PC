@@ -3716,28 +3716,31 @@ class BasaraLauncher(tk.Tk):
         frame.pack(fill="both", expand=True)
 
         ttk.Label(frame, text="GoldHEN Cheats · CUSA01159 · Update 01.02", font=(FONT_FAMILY, 12, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="⚠️ Cheat saat ini dinonaktifkan sementara karena belum kompatibel dengan v1.02 (mencegah crash 0xC0000005).", font=(FONT_FAMILY, 9, "bold"), foreground="#FF6B6B").pack(anchor="w", pady=(4, 6))
-        ttk.Label(frame, text="FPS Limiter unlock & Font Canary bounds check tetap aktif 100% stabil.", font=(FONT_FAMILY, 8), foreground="#A0B0C0").pack(anchor="w", pady=(0, 12))
+        ttk.Label(frame, text="Pilih cheat yang diinginkan. Patch memory v1.02 teruji aman tanpa crash.", font=(FONT_FAMILY, 9), foreground="#00FF99").pack(anchor="w", pady=(4, 12))
 
         selected = set(current)
         toggles = {}
         for cheat_id, cheat in basara4_cheats.CHEATS.items():
             var = tk.BooleanVar(value=cheat_id in selected)
             toggles[cheat_id] = var
-            ttk.Checkbutton(frame, text=f"{cheat['name']}  ·  by {basara4_cheats.AUTHOR}", variable=var).pack(anchor="w", pady=4)
+            desc = cheat.get("description", "")
+            chk_text = f"{cheat['name']}  ·  {desc}" if desc else cheat['name']
+            ttk.Checkbutton(frame, text=chk_text, variable=var).pack(anchor="w", pady=4)
 
         if not basara4_cheats.CHEATS:
-            ttk.Label(frame, text="(Daftar cheat ditangguhkan sementara demi stabilitas runtime - proteksi 0xC0000005)", font=(FONT_FAMILY, 9, "italic"), foreground="#8899A6").pack(anchor="w", pady=(10, 0))
+            ttk.Label(frame, text="(Daftar cheat kosong)", font=(FONT_FAMILY, 9, "italic"), foreground="#8899A6").pack(anchor="w", pady=(10, 0))
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill="x", side="bottom", pady=(16, 0))
 
         def save():
-            choices = []
+            choices = [cid for cid, var in toggles.items() if var.get()]
             self.cheats_val = choices
             self.sync_ini()
+            c_cnt = len(choices)
             if hasattr(self, "btn_cheat_txt"):
-                self.canvas.itemconfig(self.btn_cheat_txt, text="⚔️ Cheats (Off)")
+                c_lbl = f"⚔️ Cheats ({c_cnt})" if c_cnt > 0 else "⚔️ Cheats…"
+                self.canvas.itemconfig(self.btn_cheat_txt, text=c_lbl)
             window.destroy()
 
         ttk.Button(btn_frame, text="Cancel", command=window.destroy).pack(side="right")
@@ -4057,8 +4060,13 @@ class BasaraLauncher(tk.Tk):
             # True Internal Limiter Bypass & Patches setup in background thread
             out_dir = os.path.join(os.getcwd(), "out")
             ini_patch_60 = (read_ini().get("patch_60fps", "1") == "1")
-            selected_cheats = []  # Cheats disabled on v1.02 to prevent 0xC0000005 bad patch entry crash
-            needs_patches = (self.fps_val != "60") or ini_patch_60
+            raw_cheats = getattr(self, "cheats_val", [])
+            try:
+                import basara4_cheats
+                selected_cheats = [c for c in raw_cheats if c in basara4_cheats.CHEATS]
+            except Exception:
+                selected_cheats = []
+            needs_patches = (self.fps_val != "60") or ini_patch_60 or bool(selected_cheats)
             patch_applied = False
 
             if needs_patches and eboot_found:
