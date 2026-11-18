@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Build script for compiling launcher.py into Basara4_Launcher.exe using PyInstaller."""
 import os
 import shutil
@@ -32,6 +32,8 @@ def build():
         "--name", "Basara4_Launcher",
         "--paths", "scripts",
         "--paths", "tools",
+        "--paths", ".",
+        "--paths", "launcher",
         "--collect-all", "customtkinter",
         "--collect-all", "minidump",
         # Runtime dependencies
