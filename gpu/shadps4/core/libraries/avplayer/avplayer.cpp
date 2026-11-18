@@ -396,6 +396,8 @@ s32 PS4_SYSV_ABI sceAvPlayerJumpToTime(AvPlayerHandle handle, uint64_t time) {
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerPause(AvPlayerHandle handle) {
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerPause(handle=%p)\n", (void*)handle);
+    std::fflush(stderr);
     LOG_TRACE(Lib_AvPlayer, "called");
     if (handle == nullptr || (!AvPlayerBypassEnabled() && !IsActivePlayer(handle))) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
@@ -423,6 +425,8 @@ s32 PS4_SYSV_ABI sceAvPlayerPrintf(const char* format, ...) {
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerResume(AvPlayerHandle handle) {
+    std::fprintf(stderr, "[AvPlayer] sceAvPlayerResume(handle=%p)\n", (void*)handle);
+    std::fflush(stderr);
     LOG_TRACE(Lib_AvPlayer, "called");
     if (handle == nullptr || (!AvPlayerBypassEnabled() && !IsActivePlayer(handle))) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
@@ -432,7 +436,8 @@ s32 PS4_SYSV_ABI sceAvPlayerResume(AvPlayerHandle handle) {
     }
     const s32 res = handle->Resume();
     if (res != ORBIS_OK) {
-        fprintf(stderr, "[AV_STATE] Resume FAILED — state machine rejected. m_is_paused will stay true. Watchdog should catch this after 5s.\n");
+        fprintf(stderr, "[AV_STATE] Resume FAILED — state machine rejected.\n");
+        fflush(stderr);
     }
     return res;
 }

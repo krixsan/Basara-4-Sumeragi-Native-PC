@@ -34,7 +34,10 @@ def build():
         "--paths", "tools",
         "--collect-all", "customtkinter",
         "--collect-all", "minidump",
+        # Runtime dependencies
         "--hidden-import", "psutil",
+        "--hidden-import", "wmi",
+        # Core engine scripts (embedded — no external .py needed)
         "--hidden-import", "auto_builder",
         "--hidden-import", "prepare",
         "--hidden-import", "link_modules",
@@ -42,6 +45,13 @@ def build():
         "--hidden-import", "content_profile",
         "--hidden-import", "game_check",
         "--hidden-import", "gen_import_names",
+        "--hidden-import", "shader_recipe",
+        "--hidden-import", "gcn_shaders",
+        "--hidden-import", "mods",
+        "--hidden-import", "patches",
+        "--hidden-import", "basara4_cheats",
+        "--hidden-import", "basara4_dlc",
+        "--hidden-import", "basara4_patches",
         "launcher.py"
     ]
     if os.path.isfile(icon):

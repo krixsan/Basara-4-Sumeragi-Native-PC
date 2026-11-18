@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "core/libraries/videoout/buffer.h"
+#include "video_core/renderer_vulkan/host_passes/aa_pass.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
 #include "video_core/renderer_vulkan/host_passes/fxaa_pass.h"
@@ -48,6 +49,7 @@ struct Frame {
     /// The smoothed time between game frames when it was prepared (frame pacing).
     float fg_interval_ms{16.6f};
     vk::Format format{};
+    u64 latency_id{}; ///< bbport: the submitted game frame shown (LowLatency), 0 for others
 };
 
 enum SchedulerType {
@@ -138,6 +140,7 @@ private:
     Instance instance;
     HostPasses::FsrPass fsr_pass;
     HostPasses::FsrPass::Settings fsr_settings{};
+    HostPasses::AaPass aa_pass;
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::PostProcessingPass pp_pass;
     HostPasses::FxaaPass::Settings fxaa_settings{};

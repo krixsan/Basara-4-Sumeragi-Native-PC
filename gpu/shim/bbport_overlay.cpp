@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <string>
 
@@ -995,15 +996,35 @@ void Menu() {
     Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
     {
         // Always readable, whatever the menu's language.
-        static const char* languages[] = {"English", "Русский", "Español"};
-        int language = s.menu_language == BbSettings::MenuLanguage::Russian   ? 1
-                       : s.menu_language == BbSettings::MenuLanguage::Spanish ? 2
-                                                                              : 0;
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
-        if (ImGui::Combo("Language / Idioma", &language, languages, 3)) {
-            s.menu_language = language == 1   ? BbSettings::MenuLanguage::Russian
-                              : language == 2 ? BbSettings::MenuLanguage::Spanish
-                                              : BbSettings::MenuLanguage::English;
+        static constexpr BbSettings::MenuLanguage lang_values[] = {
+            BbSettings::MenuLanguage::English,
+            BbSettings::MenuLanguage::Indonesian,
+            BbSettings::MenuLanguage::Japanese,
+            BbSettings::MenuLanguage::Chinese,
+            BbSettings::MenuLanguage::Spanish,
+            BbSettings::MenuLanguage::Portuguese,
+            BbSettings::MenuLanguage::Russian,
+        };
+        static const char* languages[] = {
+            "English",
+            "Bahasa Indonesia",
+            "日本語",
+            "简体中文",
+            "Español",
+            "Português",
+            "Русский",
+        };
+        int language = 0;
+        const auto cur_lang = s.menu_language.load();
+        for (int i = 0; i < int(std::size(lang_values)); ++i) {
+            if (lang_values[i] == cur_lang) {
+                language = i;
+                break;
+            }
+        }
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (ImGui::Combo(BbSettings::MenuText("Language", "Язык"), &language, languages, int(std::size(languages)))) {
+            s.menu_language = lang_values[std::clamp(language, 0, int(std::size(lang_values)) - 1)];
             BbSettings::Save();
         }
     }
@@ -1096,12 +1117,23 @@ void NoticeBox(const Notice& n, float age) {
         ImVec4(1.0f, 0.80f, 0.29f, 1.0f),  // gold
         ImVec4(0.55f, 0.83f, 1.0f, 1.0f),  // platinum
     };
-    static const char* const grade_es[] = {"", "Bronce", "Plata", "Oro", "Platino"};
     static const char* const grade_en[] = {"", "Bronze", "Silver", "Gold", "Platinum"};
+    static const char* const grade_id[] = {"", "Perunggu", "Perak", "Emas", "Platinum"};
+    static const char* const grade_ja[] = {"", "ブロンズ", "シルバー", "ゴールド", "プラチナ"};
+    static const char* const grade_zh[] = {"", "铜杯", "银杯", "金杯", "白金杯"};
+    static const char* const grade_es[] = {"", "Bronce", "Plata", "Oro", "Platino"};
+    static const char* const grade_pt[] = {"", "Bronze", "Prata", "Ouro", "Platina"};
+    static const char* const grade_ru[] = {"", "Бронза", "Серебро", "Золото", "Платина"};
     const int kind = std::clamp(n.kind, 0, 4);
     const ImVec4 color = grades[kind];
-    const bool spanish = BbSettings::Get().menu_language == BbSettings::MenuLanguage::Spanish ||
-                         n.title.rfind("Logro", 0) == 0;
+    const auto mlang = BbSettings::Get().menu_language.load();
+    const char* const* grade_tbl =
+        (mlang == BbSettings::MenuLanguage::Spanish || n.title.rfind("Logro", 0) == 0) ? grade_es :
+        mlang == BbSettings::MenuLanguage::Indonesian ? grade_id :
+        mlang == BbSettings::MenuLanguage::Japanese ? grade_ja :
+        mlang == BbSettings::MenuLanguage::Chinese ? grade_zh :
+        mlang == BbSettings::MenuLanguage::Portuguese ? grade_pt :
+        mlang == BbSettings::MenuLanguage::Russian ? grade_ru : grade_en;
     const float s = base_scale;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float width = 520.0f * s, icon = 84.0f * s, pad = 14.0f * s;
@@ -1141,7 +1173,7 @@ void NoticeBox(const Notice& n, float age) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - icon - pad * 2.0f - 14.0f * s);
     ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 0.85f);
     std::string header = n.title;
-    if (kind) header += std::string("  ·  ") + (spanish ? grade_es[kind] : grade_en[kind]);
+    if (kind) header += std::string("  ·  ") + grade_tbl[kind];
     ImGui::TextColored(color, "%s", header.c_str());
     ImGui::PopFont();
     ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.3f);
@@ -1214,6 +1246,19 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     font_config.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_font_ttf),
                                    int(bb_font_ttf_end - bb_font_ttf), 18.0f, &font_config);
+#ifdef _WIN32
+    // Merge system CJK font on demand (ImGui 1.92+ dynamic baking) so Japanese/Chinese menu & PS4 trophies render cleanly.
+    for (const char* cjk_font : {"C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/YuGothM.ttc",
+                                 "C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msgothic.ttc"}) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(cjk_font, ec)) {
+            ImFontConfig merge_cfg;
+            merge_cfg.MergeMode = true;
+            io.Fonts->AddFontFromFileTTF(cjk_font, 18.0f, &merge_cfg);
+            break;
+        }
+    }
+#endif
 
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(

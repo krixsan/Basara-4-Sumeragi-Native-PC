@@ -37,10 +37,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         auto& slot = v.ports[size_t(key[5] - '1')];
         std::snprintf(slot.data(), slot.size(), "%s", value.c_str());
     } else if (key == "menu_language") {
-        if (value == "en") v.menu_language = MenuLanguage::English;
-        else if (value == "ru") v.menu_language = MenuLanguage::Russian;
-        else if (value == "es") v.menu_language = MenuLanguage::Spanish;
-        else std::printf("Settings: unknown menu_language '%s' (expected en, ru or es)\n", value.c_str());
+        MenuLanguage parsed = MenuLanguage::English;
+        if (TryParseMenuLanguage(value.c_str(), parsed)) {
+            v.menu_language = parsed;
+        } else {
+            std::printf("Settings: unknown menu_language '%s' (expected en, id, ja, zh, es, pt or ru)\n", value.c_str());
+        }
     } else if (key == "upscaler") {
         for (int u = 0; u < UpscalerCount; ++u) {
             if (value == UpscalerName(u)) {
@@ -148,10 +150,11 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         float scale = std::stof(value);
         v.render_scale = std::clamp(scale, 0.5f, 2.0f);
     } else if (key == "anti_aliasing") {
-        if (value == "off") v.anti_aliasing = 0;
-        else if (value == "fxaa") v.anti_aliasing = 1;
-        else if (value == "msaa2") v.anti_aliasing = 2;
-        else if (value == "msaa4") v.anti_aliasing = 4;
+        if (value == "off" || value == "0" || value == "none") v.anti_aliasing = AaOff;
+        else if (value == "fxaa" || value == "1") v.anti_aliasing = AaFxaa;
+        else if (value == "smaa" || value == "smaa1x" || value == "5") v.anti_aliasing = AaSmaa;
+        else if (value == "msaa2" || value == "2") v.anti_aliasing = AaMsaa2;
+        else if (value == "msaa4" || value == "4") v.anti_aliasing = AaMsaa4;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
@@ -191,11 +194,40 @@ Values& Get() {
     return values;
 }
 
+bool TryParseMenuLanguage(const char* code, MenuLanguage& out) {
+    if (!code || !code[0] || !code[1]) return false;
+    const char c0 = char(code[0] >= 'A' && code[0] <= 'Z' ? code[0] + 32 : code[0]);
+    const char c1 = char(code[1] >= 'A' && code[1] <= 'Z' ? code[1] + 32 : code[1]);
+    if (c0 == 'e' && c1 == 'n') { out = MenuLanguage::English; return true; }
+    if ((c0 == 'i' && c1 == 'd') || (c0 == 'i' && c1 == 'n')) { out = MenuLanguage::Indonesian; return true; }
+    if ((c0 == 'j' && c1 == 'a') || (c0 == 'j' && c1 == 'p')) { out = MenuLanguage::Japanese; return true; }
+    if ((c0 == 'z' && c1 == 'h') || (c0 == 'c' && c1 == 'n')) { out = MenuLanguage::Chinese; return true; }
+    if (c0 == 'e' && c1 == 's') { out = MenuLanguage::Spanish; return true; }
+    if ((c0 == 'p' && c1 == 't') || (c0 == 'b' && c1 == 'r')) { out = MenuLanguage::Portuguese; return true; }
+    if (c0 == 'r' && c1 == 'u') { out = MenuLanguage::Russian; return true; }
+    return false;
+}
+
+const char* MenuLanguageCode(MenuLanguage lang) {
+    switch (lang) {
+    case MenuLanguage::Russian: return "ru";
+    case MenuLanguage::Spanish: return "es";
+    case MenuLanguage::Indonesian: return "id";
+    case MenuLanguage::Japanese: return "ja";
+    case MenuLanguage::Chinese: return "zh";
+    case MenuLanguage::Portuguese: return "pt";
+    case MenuLanguage::English:
+    default: return "en";
+    }
+}
+
 const char* MenuText(const char* english, const char* russian) {
-    switch (Get().menu_language.load()) {
+    const MenuLanguage lang = Get().menu_language.load();
+    switch (lang) {
+    case MenuLanguage::English: return english;
     case MenuLanguage::Russian: return russian;
     case MenuLanguage::Spanish: return Spanish(english);
-    default: return english;
+    default: return TranslateMenu(lang, english);
     }
 }
 
@@ -204,8 +236,8 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    // Default async_pipelines to true on systems with more than 4 cores to prevent shader stutter
-    v.async_pipelines = (std::thread::hardware_concurrency() > 4);
+    // Default async_pipelines to true to eliminate shader stutter
+    v.async_pipelines = true;
     // engine: the menu's language until one is chosen in it (menu_language in basara.ini): the
     // launcher's (BB_MENU_LANGUAGE), else the system's, as the launcher picks its own.
     {
@@ -218,10 +250,12 @@ void Load() {
                 }
             }
         }
-        auto is = [&](char a, char b) {
-            return lang && (lang[0] == a || lang[0] == a - 32) && (lang[1] == b || lang[1] == b - 32);
-        };
-        v.menu_language = is('r', 'u') ? MenuLanguage::Russian : is('e', 's') ? MenuLanguage::Spanish : MenuLanguage::English;
+        MenuLanguage detected = MenuLanguage::English;
+        if (TryParseMenuLanguage(lang, detected)) {
+            v.menu_language = detected;
+        } else {
+            v.menu_language = MenuLanguage::English;
+        }
     }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -240,9 +274,10 @@ void Load() {
     // v0.4: the launcher's language (BB_MENU_LANGUAGE) wins over the saved one: the launcher is
     // where the player picks it.
     if (const char* lang = std::getenv("BB_MENU_LANGUAGE"); lang && *lang) {
-        if (!std::strncmp(lang, "es", 2)) v.menu_language = MenuLanguage::Spanish;
-        else if (!std::strncmp(lang, "ru", 2)) v.menu_language = MenuLanguage::Russian;
-        else if (!std::strncmp(lang, "en", 2)) v.menu_language = MenuLanguage::English;
+        MenuLanguage parsed = MenuLanguage::English;
+        if (TryParseMenuLanguage(lang, parsed)) {
+            v.menu_language = parsed;
+        }
     }
     // Engine: the engine's temporal upscalers and object motion vectors read the scene of the game
     // engine was built for (its render targets, constants and vertex streams), not this one; they
@@ -262,6 +297,7 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
+        {"BB_ASYNC_PIPELINES", "async_pipelines"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -382,9 +418,7 @@ void Save() {
             put(("port." + std::to_string(p + 1)).c_str(), std::string(v.ports[size_t(p)].data()));
         }
     }
-    put("menu_language", v.menu_language == MenuLanguage::Russian   ? "ru"
-                         : v.menu_language == MenuLanguage::Spanish ? "es"
-                                                                    : "en");
+    put("menu_language", MenuLanguageCode(v.menu_language.load()));
     put("upscaler", UpscalerName(v.upscaler));
     put("preset", std::to_string(v.preset.load()));
     put("sharpen", flag(v.sharpen));
@@ -427,9 +461,11 @@ void Save() {
         std::snprintf(scale_str, sizeof(scale_str), "%.1f", v.render_scale.load());
         put("render_scale", scale_str);
     }
-    const char* aa_str = v.anti_aliasing == 0 ? "off" :
-                         v.anti_aliasing == 1 ? "fxaa" :
-                         v.anti_aliasing == 2 ? "msaa2" : "msaa4";
+    const int aa = v.anti_aliasing.load();
+    const char* aa_str = aa == AaOff   ? "off" :
+                         aa == AaFxaa  ? "fxaa" :
+                         aa == AaSmaa  ? "smaa" :
+                         aa == AaMsaa2 ? "msaa2" : "msaa4";
     put("anti_aliasing", aa_str);
     put("temporal", TemporalNames[std::clamp(v.temporal.load(), 0, TemporalCount - 1)]);
     put("dlss_quality", DlssQualityNames[std::clamp(v.dlss_quality.load(), 0, DlssQualityCount - 1)]);

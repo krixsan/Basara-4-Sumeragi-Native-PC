@@ -1,11 +1,22 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <unordered_map>
 #include <unordered_set>
+#include <miniz.h>
+#include "common/hash.h"
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
+#include "shader_recompiler/recompiler.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -14,11 +25,20 @@
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion = 9u; // engine: GS ring slot fold, 1D images as 2D; MSAA setting
-static constexpr u32 ShaderMetaVersion = 8u; // engine: GS runtime info compared in full
-static constexpr u32 PipelineKeyVersion = 7u; // engine: GS permutations re-indexed; MSAA setting
+static constexpr u32 ShaderMetaVersion = 9u;   // recipe: fetch shader V# descriptors serialized
+static constexpr u32 PipelineKeyVersion = 7u;  // engine: GS permutations re-indexed; MSAA setting
+
+// bbport: shader binaries carry no version of their own inside the blob, so embed the version in
+// the filename so rebuilt binaries with a bumped version never collide with or load stale SPIR-V.
+static std::string ShaderBinaryName(u64 pgm_hash, size_t perm_idx) {
+    return fmt::format("{:#018x}_{}_v{}", pgm_hash, perm_idx, ShaderBinaryVersion);
+}
 } // namespace Serialization
 
 namespace Vulkan {
+
+/// SacredFire: set while the shader prebuild reads recipe entries (see PrebuildFromRecipe).
+thread_local bool g_prebuild_reading = false;
 
 void RegisterPipelineData(const ComputePipelineKey& key,
                           ComputePipeline::SerializationSupport& sdata) {
@@ -78,6 +98,24 @@ void RegisterShaderMeta(const Shader::Info& info,
     spec.Serialize(ar);
     info.Serialize(ar);
 
+    // Record the vertex buffer descriptors read by the fetch shader via user data pointers so
+    // offline shader recipe translation can replay this permutation without live guest memory.
+    std::vector<Shader::Info::ReplaySharp> sharps;
+    if (fetch_shader_data) {
+        for (const auto& attrib : fetch_shader_data->attributes) {
+            const auto buffer = info.ReadUdReg<AmdGpu::Buffer>(attrib.sgpr_base, attrib.dword_offset);
+            Shader::Info::ReplaySharp sharp{attrib.sgpr_base, attrib.dword_offset, {}};
+            std::memcpy(sharp.dwords.data(), &buffer,
+                        std::min(sizeof(buffer), sizeof(sharp.dwords)));
+            sharps.push_back(sharp);
+        }
+    }
+    Serialization::Writer extra{ar};
+    extra.Write(static_cast<u32>(sharps.size()));
+    for (const auto& sharp : sharps) {
+        extra.Write(&sharp, sizeof(sharp));
+    }
+
     Storage::DataBase::Instance().Save(Storage::BlobType::ShaderMeta,
                                        fmt::format("{:#018x}", perm_hash), ar.TakeOff());
 }
@@ -88,18 +126,22 @@ void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx)
     }
 
     Storage::DataBase::Instance().Save(Storage::BlobType::ShaderBinary,
-                                       fmt::format("{:#018x}_{}", pgm_hash, perm_idx),
+                                       Serialization::ShaderBinaryName(pgm_hash, perm_idx),
                                        std::move(spv));
 }
 
 bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
                     std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
-                    Shader::StageSpecialization& spec, size_t& perm_idx) {
+                    Shader::StageSpecialization& spec, size_t& perm_idx,
+                    std::vector<Shader::Info::ReplaySharp>* sharps = nullptr) {
     Serialization::Reader meta{ar};
 
     u32 meta_version{};
     meta.Read(meta_version);
-    if (meta_version != Serialization::ShaderMetaVersion) {
+    const bool valid_meta_version =
+        sharps ? (meta_version == Serialization::ShaderMetaVersion || meta_version == 8u)
+               : (meta_version == Serialization::ShaderMetaVersion);
+    if (!valid_meta_version) {
         return false;
     }
 
@@ -115,6 +157,22 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
 
     spec.Deserialize(ar);
     info.Deserialize(ar);
+    if (sharps) {
+        if (meta_version >= 9u) {
+            Serialization::Reader extra{ar};
+            u32 count{};
+            extra.Read(count);
+            if (count > 64) {
+                return false;
+            }
+            sharps->resize(count);
+            for (auto& sharp : *sharps) {
+                extra.Read(&sharp, sizeof(sharp));
+            }
+        } else {
+            sharps->clear();
+        }
+    }
 
     // Motion vertex shaders embed session-local buffer device addresses. They must be
     // recompiled for the current allocation, never loaded from a previous process.
@@ -274,9 +332,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     }
 
     std::vector<u32> spv{};
-    Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
-                                       fmt::format("{:#018x}_{}", program->info.pgm_hash, perm_idx),
-                                       spv);
+    Storage::DataBase::Instance().Load(
+        Storage::BlobType::ShaderBinary,
+        Serialization::ShaderBinaryName(program->info.pgm_hash, perm_idx), spv);
     // engine: a SPIR-V binary starts with its magic number and a 5-word header; anything else is
     // a damaged file (crash or power loss while it was written) the driver must not see.
     if (spv.size() < 5 || spv[0] != 0x07230203u) {
@@ -332,6 +390,409 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     return true;
 }
 
+namespace {
+
+std::filesystem::path EnvPath(const char* name) {
+#ifdef _WIN32
+    const std::wstring wide(name, name + std::strlen(name));
+    const wchar_t* value = _wgetenv(wide.c_str());
+    return value && *value ? std::filesystem::path{value} : std::filesystem::path{};
+#else
+    const char* value = std::getenv(name);
+    return value && *value ? std::filesystem::path{value} : std::filesystem::path{};
+#endif
+}
+
+bool ReadWhole(const std::filesystem::path& path, std::vector<u8>& out) {
+    std::ifstream file{path, std::ios::binary};
+    if (!file) {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(file), {});
+    return true;
+}
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream file{path};
+    return file ? std::string(std::istreambuf_iterator<char>(file), {}) : std::string{};
+}
+
+void WriteText(const std::filesystem::path& path, const std::string& text, bool append = false) {
+    std::ofstream file{path, append ? std::ios::app : std::ios::trunc};
+    file << text;
+}
+
+/// scripts/gcn_shaders.py: "BBGCN002", u32 count, u32 0, count x {u64 hash, u32 offset,
+/// u32 bytes, u32 type, u32 0}, then the code of each shader. Geometry copy shaders (type 6)
+/// share a hash with their geometry shader and are kept separate.
+struct GcnPack {
+    static constexpr u32 CopyShaderType = 6;
+    std::vector<u8> data;
+    std::unordered_map<u64, std::span<const u32>> code;
+    std::unordered_map<u64, std::span<const u32>> copy_code;
+
+    bool Load(const std::filesystem::path& path) {
+        constexpr size_t EntrySize = 24;
+        if (!ReadWhole(path, data) || data.size() < 16 ||
+            std::memcmp(data.data(), "BBGCN002", 8) != 0) {
+            return false;
+        }
+        u32 count{};
+        std::memcpy(&count, data.data() + 8, sizeof(count));
+        if (16 + u64{count} * EntrySize > data.size()) {
+            return false;
+        }
+        for (u32 i = 0; i < count; ++i) {
+            const u8* entry = data.data() + 16 + u64{i} * EntrySize;
+            u64 hash{};
+            u32 offset{}, bytes{}, type{};
+            std::memcpy(&hash, entry, 8);
+            std::memcpy(&offset, entry + 8, 4);
+            std::memcpy(&bytes, entry + 12, 4);
+            std::memcpy(&type, entry + 16, 4);
+            if (offset % 4 || bytes % 4 || bytes == 0 || u64{offset} + bytes > data.size()) {
+                return false;
+            }
+            const std::span shader{reinterpret_cast<const u32*>(data.data() + offset), bytes / 4};
+            (type == CopyShaderType ? copy_code : code).emplace(hash, shader);
+        }
+        return true;
+    }
+};
+
+} // namespace
+
+void PipelineCache::PrebuildFromRecipe() {
+    auto& db = Storage::DataBase::Instance();
+    const auto dir = db.FolderPath();
+    if (dir.empty()) {
+        return;
+    }
+    auto recipe_path = EnvPath("BB_SHADER_RECIPE");
+    if (recipe_path == "0") {
+        return;
+    }
+    if (recipe_path.empty() && std::filesystem::is_regular_file("shaders/recipe.zip")) {
+        recipe_path = "shaders/recipe.zip";
+    }
+    auto gcn_path = EnvPath("BB_GCN_SHADERS");
+    if (gcn_path.empty() && std::filesystem::is_regular_file("out/gcn_shaders.bin")) {
+        gcn_path = "out/gcn_shaders.bin";
+    }
+    if (recipe_path.empty() || gcn_path.empty()) {
+        return;
+    }
+
+    std::vector<u8> recipe;
+    mz_zip_archive zip{};
+    if (!ReadWhole(recipe_path, recipe) ||
+        !mz_zip_reader_init_mem(&zip, recipe.data(), recipe.size(), 0)) {
+        std::printf("Shaders: the shader recipe %s could not be read\n",
+                    recipe_path.string().c_str());
+        return;
+    }
+    struct ZipEnd {
+        mz_zip_archive* zip;
+        ~ZipEnd() {
+            mz_zip_reader_end(zip);
+        }
+    } zip_end{&zip};
+    const u32 files = mz_zip_reader_get_num_files(&zip);
+
+    u64 id = 0xcbf29ce484222325ull ^ (u64{Serialization::ShaderBinaryVersion} << 40) ^
+             (u64{Serialization::ShaderMetaVersion} << 20) ^ Serialization::PipelineKeyVersion;
+    for (u32 i = 0; i < files; ++i) {
+        mz_zip_archive_file_stat stat{};
+        if (mz_zip_reader_file_stat(&zip, i, &stat)) {
+            id = (id ^ stat.m_crc32 ^ (u64{stat.m_uncomp_size} << 32)) * 0x100000001b3ull;
+        }
+    }
+    recipe_id = id;
+    const std::string id_text = fmt::format("{:016x}", id);
+    const auto marker = dir / "recipe.done";
+    if (ReadText(marker).starts_with(id_text)) {
+        return;
+    }
+
+    const auto attempt = dir / "recipe.attempt";
+    const auto bad_list = dir / "recipe.bad";
+    std::unordered_set<u32> bad;
+    if (const auto text = ReadText(attempt); text.starts_with(id_text + " ")) {
+        WriteText(bad_list, text + "\n", true);
+    }
+    {
+        std::ifstream list{bad_list};
+        std::string line_id;
+        u32 index{};
+        while (list >> line_id >> index) {
+            if (line_id == id_text) {
+                bad.insert(index);
+            }
+        }
+    }
+
+    GcnPack pack;
+    if (!pack.Load(gcn_path)) {
+        std::printf("Shaders: no game shaders at %s; the recipe waits for the next start\n",
+                    gcn_path.string().c_str());
+        return;
+    }
+
+    std::unordered_set<u64> own;
+    std::unordered_set<std::string> own_keys;
+    std::error_code ec;
+    const std::string spv_suffix = fmt::format("_v{}.spv", Serialization::ShaderBinaryVersion);
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        const auto name = entry.path().filename().string();
+        if (name.ends_with(".key")) {
+            own_keys.insert(name);
+            continue;
+        }
+        if (!name.ends_with(spv_suffix)) {
+            continue;
+        }
+        char* end{};
+        const u64 pgm = std::strtoull(name.c_str(), &end, 16);
+        if (!end || *end != '_') {
+            continue;
+        }
+        const u64 perm = std::strtoull(end + 1, nullptr, 10);
+        std::ifstream meta{dir / fmt::format("{:#018x}.meta", HashCombine(pgm, perm)),
+                           std::ios::binary};
+        u32 versions[2]{};
+        if (meta.read(reinterpret_cast<char*>(versions), sizeof(versions)) &&
+            versions[0] == Serialization::ShaderMetaVersion &&
+            versions[1] == Serialization::ShaderBinaryVersion) {
+            own.insert(pgm);
+        }
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    u32 metas = 0;
+    for (u32 i = 0; i < files; ++i) {
+        char name[MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE]{};
+        mz_zip_reader_get_filename(&zip, i, name, sizeof(name));
+        metas += std::string_view{name}.ends_with(".meta");
+    }
+    std::printf("Shaders: preparing %u shaders of the recipe for this GPU (once)\n", metas);
+    std::fflush(stdout);
+
+    std::unordered_set<u64> built;
+    u32 n_built = 0, n_theirs = 0, n_missing = 0, n_skipped = 0, n_failed = 0, seen = 0;
+    for (u32 i = 0; i < files; ++i) {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, i, &stat) ||
+            !std::string_view{stat.m_filename}.ends_with(".meta")) {
+            continue;
+        }
+        if (++seen % 500 == 0) {
+            std::printf("Shaders: %u of %u\n", seen, metas);
+            std::fflush(stdout);
+        }
+        if (bad.contains(i)) {
+            ++n_failed;
+            continue;
+        }
+        const u64 perm_hash = std::strtoull(stat.m_filename, nullptr, 16);
+        std::vector<u8> blob(stat.m_uncomp_size);
+        if (!mz_zip_reader_extract_to_mem(&zip, i, blob.data(), blob.size(), 0)) {
+            ++n_skipped;
+            continue;
+        }
+        Shader::Info rec{};
+        std::optional<Shader::Gcn::FetchShaderData> fetch{};
+        Shader::StageSpecialization spec{};
+        size_t perm_idx{};
+        std::vector<Shader::Info::ReplaySharp> sharps;
+        bool loaded = false;
+        g_prebuild_reading = true;
+        try {
+            Serialization::Archive ar{std::move(blob)};
+            loaded = LoadShaderMeta(ar, rec, fetch, spec, perm_idx, &sharps);
+        } catch (const std::exception&) {
+            loaded = false;
+        }
+        g_prebuild_reading = false;
+        const u64 pgm = rec.pgm_hash;
+        if (!loaded || HashCombine(pgm, u64{perm_idx}) != perm_hash ||
+            rec.flattened_ud_buf.size() < Shader::ShaderParams::NumShaderUserData ||
+            (rec.has_fetch_shader && !spec.fetch_shader_data) ||
+            rec.sw_stage == Shader::SwStage::TessellationControl ||
+            rec.sw_stage == Shader::SwStage::TessellationEval) {
+            ++n_skipped;
+            continue;
+        }
+        if (own.contains(pgm)) {
+            ++n_theirs;
+            continue;
+        }
+        const auto code = pack.code.find(pgm);
+        if (code == pack.code.end()) {
+            ++n_missing;
+            continue;
+        }
+
+        std::array<u32, Shader::ShaderParams::NumShaderUserData> user_data{};
+        std::copy_n(rec.flattened_ud_buf.begin(), user_data.size(), user_data.begin());
+        const Shader::ShaderParams params{
+            .user_data = user_data, .code = code->second, .hash = pgm};
+        Shader::Info info{rec.hw_stage, rec.sw_stage, params};
+        auto runtime_info = spec.runtime_info;
+        auto binding = spec.start;
+        if (rec.hw_stage == Shader::HwStage::Geometry) {
+            const auto copy = pack.copy_code.find(runtime_info.hw.gs.vs_copy_hash);
+            if (copy == pack.copy_code.end()) {
+                ++n_missing;
+                continue;
+            }
+            runtime_info.hw.gs.vs_copy = copy->second;
+        }
+
+        WriteText(attempt, fmt::format("{} {}", id_text, i));
+        const Shader::Info::Replay replay{&rec.flattened_ud_buf, &spec.fetch_shader_data, sharps};
+        Shader::Info::replay = &replay;
+        struct ReplayEnd {
+            ~ReplayEnd() {
+                Shader::Info::replay = nullptr;
+            }
+        } replay_end;
+        std::vector<u32> spv;
+        try {
+            auto program = Shader::TranslateProgram(params.code, pools, info, runtime_info, profile);
+            spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, binding);
+        } catch (const std::exception&) {
+            spv.clear();
+        }
+
+        const bool same = !spv.empty() && !replay.missed && !info.translation_failed &&
+                          info.buffers.size() == rec.buffers.size() &&
+                          info.images.size() == rec.images.size() &&
+                          info.samplers.size() == rec.samplers.size() &&
+                          info.fmasks.size() == rec.fmasks.size() &&
+                          info.ud_mask.mask == rec.ud_mask.mask &&
+                          info.has_fetch_shader == rec.has_fetch_shader &&
+                          info.flattened_ud_buf.size() == rec.flattened_ud_buf.size();
+        if (!same) {
+            ++n_failed;
+            continue;
+        }
+        auto [result, module] = instance.GetDevice().createShaderModule(
+            {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
+        if (result != vk::Result::eSuccess) {
+            ++n_failed;
+            continue;
+        }
+        instance.GetDevice().destroyShaderModule(module);
+
+        RegisterShaderBinary(std::move(spv), pgm, perm_idx);
+        RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
+        built.insert(perm_hash);
+        ++n_built;
+    }
+    std::filesystem::remove(attempt, ec);
+    db.Flush();
+    const auto translated = std::chrono::steady_clock::now();
+
+    u32 n_keys = 0, n_keys_skipped = 0, n_keys_rejected = 0;
+    for (u32 i = 0; i < files; ++i) {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, i, &stat) ||
+            !std::string_view{stat.m_filename}.ends_with(".key")) {
+            continue;
+        }
+        const std::string name{stat.m_filename};
+        if (own_keys.contains(name)) {
+            continue;
+        }
+        std::vector<u8> blob(stat.m_uncomp_size);
+        if (!mz_zip_reader_extract_to_mem(&zip, i, blob.data(), blob.size(), 0)) {
+            ++n_keys_skipped;
+            continue;
+        }
+        bool usable = false, compute = false;
+        try {
+            Serialization::Archive ar{std::vector<u8>{blob}};
+            Serialization::Reader reader{ar};
+            u32 version{}, is_compute{};
+            reader.Read(version);
+            reader.Read(is_compute);
+            compute = is_compute != 0;
+            if (version == Serialization::PipelineKeyVersion) {
+                if (compute) {
+                    ComputePipelineKey key{};
+                    key.Deserialize(ar);
+                    usable = built.contains(key.value) && !compute_pipelines.contains(key);
+                } else {
+                    GraphicsPipelineKey key{};
+                    key.Deserialize(ar);
+                    usable = !graphics_pipelines.contains(key);
+                    for (const u64 hash : key.stage_hashes) {
+                        usable &= hash == 0 || built.contains(hash);
+                    }
+                }
+            }
+        } catch (const std::exception&) {
+            usable = false;
+        }
+        if (!usable) {
+            ++n_keys_skipped;
+            continue;
+        }
+        bool created = false;
+        try {
+            Serialization::Archive ar{std::vector<u8>{blob}};
+            Serialization::Reader reader{ar};
+            u32 version{}, is_compute{};
+            reader.Read(version);
+            reader.Read(is_compute);
+            created = compute ? LoadComputePipeline(ar) : LoadGraphicsPipeline(ar);
+        } catch (const std::exception&) {
+            created = false;
+            ++n_keys_rejected;
+        }
+        sel.infos.fill(nullptr);
+        sel.modules.fill(nullptr);
+        sel.fetch_shader.reset();
+        if (!created) {
+            ++n_keys_skipped;
+            continue;
+        }
+        db.Save(Storage::BlobType::PipelineKey, name.substr(0, name.size() - 4), std::move(blob));
+        ++n_keys;
+    }
+    db.Flush();
+
+    graphics_pipelines.clear();
+    compute_pipelines.clear();
+    std::unordered_set<VkShaderModule> modules;
+    for (const auto& [_, program] : program_cache) {
+        if (!program) {
+            continue;
+        }
+        for (const auto& permutation : program->modules) {
+            if (permutation.module) {
+                modules.insert(VkShaderModule(permutation.module));
+            }
+        }
+    }
+    for (const VkShaderModule module : modules) {
+        instance.GetDevice().destroyShaderModule(vk::ShaderModule{module});
+    }
+    program_cache.clear();
+
+    WriteText(marker, id_text + "\n");
+    const auto now = std::chrono::steady_clock::now();
+    std::printf("Shaders: recipe prepared in %.1f s: %u shaders in %.1f s (%u already in cache, "
+                "%u not in game files, %u not usable, %u failed), %u pipelines in %.1f s "
+                "(%u left out, %u rejected by driver)\n",
+                std::chrono::duration<double>(now - started).count(), n_built,
+                std::chrono::duration<double>(translated - started).count(), n_theirs, n_missing,
+                n_skipped, n_failed, n_keys,
+                std::chrono::duration<double>(now - translated).count(), n_keys_skipped,
+                n_keys_rejected);
+    std::fflush(stdout);
+}
+
 void PipelineCache::WarmUp() {
     if (!EmulatorSettings.IsPipelineCacheEnabled()) {
         return;
@@ -340,38 +801,45 @@ void PipelineCache::WarmUp() {
     Storage::DataBase::Instance().Open();
 
     // Check if cache is compatible
+    const u32 versions[3]{Serialization::ShaderMetaVersion, Serialization::ShaderBinaryVersion,
+                          Serialization::PipelineKeyVersion};
+    std::vector<u8> expected(sizeof(profile) + sizeof(versions));
+    std::memcpy(expected.data(), &profile, sizeof(profile));
+    std::memcpy(expected.data() + sizeof(profile), versions, sizeof(versions));
+
     std::vector<u8> profile_data{};
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
+    bool fresh = false;
     if (profile_data.empty()) {
         Storage::DataBase::Instance().FinishPreload();
-
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
         Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
+                                           std::vector<u8>{expected});
+        fresh = true;
+    } else {
+        Shader::Profile cached_profile{};
+        const bool sized = profile_data.size() == expected.size();
+        if (sized) {
+            std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
+        }
+        if (!sized || cached_profile != profile ||
+            std::memcmp(profile_data.data() + sizeof(profile), versions, sizeof(versions)) != 0) {
+            // engine: upstream closed the cache for the session here, so it was never rewritten
+            // and every later session compiled every shader again (stutters on each new area).
+            // Start a fresh cache for this build and GPU instead.
+            LOG_WARNING(Render,
+                        "Pipeline cache isn't compatible with current system: rebuilding it");
+            Storage::DataBase::Instance().Clear();
+            Storage::DataBase::Instance().FinishPreload();
+            Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
+                                               std::vector<u8>{expected});
+            fresh = true;
+        }
+    }
+    if (fresh && EmulatorSettings.IsPipelineCacheArchived()) {
         return;
     }
-    if (profile_data.size() != sizeof(Shader::Profile)) {
-        LOG_WARNING(Render, "Pipeline cache profile has unexpected size ({} != {})",
-                    profile_data.size(), sizeof(Shader::Profile));
-    }
-    Shader::Profile cached_profile{};
-    if (profile_data.size() == sizeof(Shader::Profile)) {
-        std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
-    }
-    if (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile) {
-        // engine: upstream closed the cache for the session here, so it was never rewritten
-        // and every later session compiled every shader again (stutters on each new area).
-        // Start a fresh cache for this build and GPU instead.
-        LOG_WARNING(Render, "Pipeline cache isn't compatible with current system: rebuilding it");
-        Storage::DataBase::Instance().Clear();
-        Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
-        return;
-    }
+    PrebuildFromRecipe();
+    const auto load_started = std::chrono::steady_clock::now();
 
     u32 num_pipelines{};
     u32 num_total_pipelines{};
@@ -439,11 +907,20 @@ void PipelineCache::WarmUp() {
         program_cache.clear();
         Storage::DataBase::Instance().Clear();
         Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
         Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
+                                           std::move(expected));
+        if (recipe_id) {
+            WriteText(Storage::DataBase::Instance().FolderPath() / "recipe.done",
+                      fmt::format("{:016x} off\n", recipe_id));
+        }
         return;
+    }
+
+    if (num_pipelines) {
+        std::printf("Shaders: %u pipelines loaded from the cache in %.1f s\n", num_pipelines,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - load_started)
+                        .count());
+        std::fflush(stdout);
     }
 
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
@@ -520,7 +997,7 @@ bool PersistentSrtInfo::Deserialize(Serialization::Archive& ar) {
         // a cut-short file must not have bytes past its end run as the walker.
         const auto code = ar.CurrPtr();
         ar.Advance(walker_func_size);
-        walker_func = RegisterWalkerCode(code, walker_func_size);
+        walker_func = Vulkan::g_prebuild_reading ? nullptr : RegisterWalkerCode(code, walker_func_size);
     }
 
     return true;

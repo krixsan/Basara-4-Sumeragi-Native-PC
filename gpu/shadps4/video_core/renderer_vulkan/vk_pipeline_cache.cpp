@@ -651,6 +651,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         return nullptr;
     }
     if (const auto found = graphics_pipelines.find(sel.graphics_key); found != graphics_pipelines.end()) {
+        if (!found->second || !found->second->Handle()) {
+            return nullptr;
+        }
         return found->second.get();
     }
     // engine BB_ASYNC_PIPELINES: being compiled on a worker, or to be.
@@ -731,6 +734,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         }
         sel.fetch_shader.reset();
     }
+    if (!it->second || !it->second->Handle()) {
+        return nullptr;
+    }
     return it->second.get();
 }
 
@@ -748,6 +754,10 @@ const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey&
     }
     auto& slot = graphics_pipelines[key];
     slot = std::move(job.pipeline);
+    if (!slot || !slot->Handle()) {
+        graphics_pipelines.erase(key);
+        return nullptr;
+    }
     return slot.get();
 }
 
@@ -827,6 +837,9 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
             auto& m = sel.modules[0];
             module_related_pipelines[m].emplace_back(compute_key);
         }
+    }
+    if (!it->second || !it->second->Handle()) {
+        return nullptr;
     }
     return it->second.get();
 }

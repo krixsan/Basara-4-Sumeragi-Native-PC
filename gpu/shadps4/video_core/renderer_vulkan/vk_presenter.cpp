@@ -17,7 +17,9 @@
 #include "bbport_timeline.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
+#include "video_core/renderer_vulkan/vk_checkpoints.h"
 #include "video_core/renderer_vulkan/vk_ctr_fsr3.h"
+#include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
 #include <miniz.h>
@@ -321,6 +323,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
         static_cast<float>(EmulatorSettings.GetRcasAttenuation() / 1000.f);
 
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
+    aa_pass.Create(device, instance.GetAllocator(), num_images * 2);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
     try {
         fxaa_pass.Create(device, instance.GetAllocator(), swapchain.GetSurfaceFormat().format);
@@ -335,9 +338,14 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     }
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
 
-    if (!BbSettings::Get().async_pipelines.load()) {
+    const char* env_async = std::getenv("BB_ASYNC_PIPELINES");
+    const bool is_async = (env_async && *env_async) ? (env_async[0] != '0') : BbSettings::Get().async_pipelines.load();
+    if (!is_async) {
         LOG_WARNING(Render_Vulkan, "[PERF] WARNING: async_pipelines is OFF. This WILL cause shader stutter.");
         std::fprintf(stderr, "\n[PERF] WARNING: async_pipelines is OFF. This WILL cause shader stutter.\n");
+    } else {
+        LOG_INFO(Render_Vulkan, "[PERF] async_pipelines is ON (worker thread shader compilation active).");
+        std::fprintf(stderr, "[PERF] async_pipelines is ON (worker thread shader compilation active).\n");
     }
 }
 
@@ -631,14 +639,23 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     const int rcas_str = std::clamp(bb_settings.rcas_strength.load(std::memory_order_relaxed), 0, 100);
     fsr_settings.rcas_attenuation = 2.0f * (1.0f - static_cast<float>(rcas_str) / 100.0f);
 
+    // Final polish (SpartanPort): Compute FXAA / SMAA 1x when FSR 1.0 / RCAS is off (Native mode).
+    const bool fsr_active = fsr_settings.enable || fsr_settings.use_rcas;
+    const int raw_aa = bb_settings.anti_aliasing.load(std::memory_order_relaxed);
+    const int aa_mode = fsr_active                     ? HostPasses::AaPass::ModeOff
+                        : raw_aa == BbSettings::AaFxaa ? HostPasses::AaPass::ModeFxaa
+                        : raw_aa == BbSettings::AaSmaa ? HostPasses::AaPass::ModeSmaa
+                                                       : HostPasses::AaPass::ModeOff;
+    const bool aa_linear = !pp_settings.srgb_input && !frame->is_hdr;
+
     // Numbered here, in command order; marked where the commands are recorded.
     const u32 stream = draw_scheduler.CrumbStream();
     const bool crumbs = Breadcrumbs::Enabled();
     const u32 fsr_crumb = crumbs ? Breadcrumbs::Note(stream, {.name = "presenter FSR"}) : 0;
     const u32 pp_crumb = crumbs ? Breadcrumbs::Note(stream, {.name = "presenter post process"}) : 0;
     draw_scheduler.Record([this, frame, image_view, image_size, frame_subresources, stream,
-                           fsr_crumb, pp_crumb, fsr = fsr_settings,
-                           pp = pp_settings](vk::CommandBuffer cmdbuf) {
+                           fsr_crumb, pp_crumb, fsr = fsr_settings, pp = pp_settings, aa_mode,
+                           aa_linear](vk::CommandBuffer cmdbuf) {
         // Frames of different submissions may be recorded on two threads at once.
         std::scoped_lock lock{passes_mutex};
         const auto pre_barrier = vk::ImageMemoryBarrier2{
@@ -658,32 +675,30 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         if (fsr_crumb) {
             Breadcrumbs::Mark(cmdbuf, stream, fsr_crumb, false);
         }
-        const vk::ImageView input = fsr_pass.Render(cmdbuf, image_view, image_size,
-                                                    {frame->width, frame->height}, fsr,
-                                                    frame->is_hdr);
+        vk::ImageView input = fsr_pass.Render(cmdbuf, image_view, image_size,
+                                              {frame->width, frame->height}, fsr,
+                                              frame->is_hdr);
         if (fsr_crumb) {
             Breadcrumbs::Mark(cmdbuf, stream, fsr_crumb, true);
+        }
+        if (aa_mode != HostPasses::AaPass::ModeOff) {
+            input = aa_pass.Render(cmdbuf, input, image_size, aa_mode, aa_linear);
+            static int logged_aa = -1;
+            const bool active = !aa_pass.Failed(aa_mode);
+            const int reported = active ? aa_mode : 0;
+            if (reported != logged_aa) {
+                logged_aa = reported;
+                std::printf("Anti-aliasing: %s%s (%ux%u)\n",
+                            aa_mode == HostPasses::AaPass::ModeSmaa ? "SMAA 1x" : "FXAA",
+                            active ? " active" : " failed (off)", image_size.width,
+                            image_size.height);
+                std::fflush(stdout);
+            }
+        }
+        if (pp_crumb) {
             Breadcrumbs::Mark(cmdbuf, stream, pp_crumb, false);
         }
         pp_pass.Render(cmdbuf, input, image_size, *frame, pp);
-
-        // v2.0: FXAA pass - same thread as pp_pass, no cross-thread race
-        if (BbSettings::Get().anti_aliasing == 1
-            && frame->image_view != vk::ImageView{}
-            && frame->width > 0
-            && frame->height > 0) {
-            try {
-                fxaa_pass.Render(cmdbuf, frame->image_view, vk::Extent2D{frame->width, frame->height}, *frame, fxaa_settings);
-            } catch (const vk::SystemError& e) {
-                LOG_CRITICAL(Render_Vulkan, "FXAA RENDER EXCEPTION: {}", e.what());
-                fprintf(stderr, "\n[FXAA_ERROR] %s\n", e.what());
-                BbSettings::Get().anti_aliasing = 0; // Disable FXAA to prevent crash
-            } catch (const std::exception& e) {
-                LOG_CRITICAL(Render_Vulkan, "FXAA STD EXCEPTION: {}", e.what());
-                fprintf(stderr, "\n[FXAA_ERROR] %s\n", e.what());
-                BbSettings::Get().anti_aliasing = 0;
-            }
-        }
 
         if (pp_crumb) {
             Breadcrumbs::Mark(cmdbuf, stream, pp_crumb, true);
@@ -814,9 +829,22 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
+    // SacredFire (from OCTR): a frame not presented (minimised window, swapchain not presentable)
+    // still completes its flip only once the GPU has drawn it, as a present would. Completed at
+    // once, it let the game run ahead of the GPU and reuse command/constant memory still in use
+    // (late fences, garbage buffers: device lost a few minutes after minimising).
+    // Never called under submit_mutex: the draw thread needs it to submit the frame.
+    const auto skip_frame = [&] {
+        if (frame->ready_semaphore == draw_scheduler.GetWorkSemaphore()->Handle()) {
+            draw_scheduler.WaitSubmitted(frame->ready_tick);
+            draw_scheduler.GetWorkSemaphore()->Wait(frame->ready_tick);
+        }
+        free_frame();
+    };
+
     // engine: nothing to present to while the window is minimised (a 0x0 surface, issue #31).
     if (window.GetWidth() == 0 || window.GetHeight() == 0) {
-        free_frame();
+        skip_frame();
         return;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
@@ -825,10 +853,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     // fullscreen in game corrupted the heap on NVIDIA (0xc0000374).
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         !swapchain.IsPresentable()) {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.IsPresentable()) {
-            free_frame();
+        bool presentable;
+        {
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+            presentable = swapchain.IsPresentable();
+        }
+        if (!presentable) {
+            skip_frame();
             return;
         }
     }
@@ -875,19 +907,23 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         // The generated present may have recreated the swapchain (resize, lost surface).
         if (window.GetWidth() == 0 || window.GetHeight() == 0 || !swapchain.IsPresentable()) {
             frame->fg_ready = false;
-            free_frame();
+            skip_frame();
             return;
         }
     }
     frame->fg_ready = false;
 
     if (!swapchain.AcquireNextImage()) {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.AcquireNextImage()) {
-            // User resizes the window too fast and GPU can't keep up. Skip this frame.
+        bool acquired = false;
+        {
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+            acquired = swapchain.AcquireNextImage();
+        }
+        if (!acquired) {
+            // User resizes the window too fast and GPU can't keep up. Skip this frame after waiting.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
-            free_frame();
+            skip_frame();
             return;
         }
     }
@@ -1028,16 +1064,21 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     scheduler.Flush(info);
 
     // Present to swapchain.
+    const u64 latency_id = !is_reusing_frame && is_game_frame ? frame->latency_id : 0;
+    LowLatency::WatchGpu(latency_id, frame->ready_semaphore, frame->ready_tick);
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present() && window.GetWidth() != 0 && window.GetHeight() != 0) {
+        LowLatency::PresentStart(latency_id);
+        if (!swapchain.Present(latency_id) && window.GetWidth() != 0 && window.GetHeight() != 0) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
+        LowLatency::PresentEnd(latency_id);
     }
 
     free_frame();
     if (!is_reusing_frame && is_game_frame) {
         DebugState.IncFlipFrameNum();
+        Checkpoints::NextFrame();
     }
 }
 
@@ -1079,6 +1120,7 @@ Frame* Presenter::GetRenderFrame() {
         frame->is_hdr != swapchain.GetHDR()) {
         RecreateFrame(frame, expected_frame_width, expected_frame_height);
     }
+    frame->latency_id = 0;
 
     return frame;
 }
@@ -1160,8 +1202,16 @@ vk::Image Presenter::PrepareHudless(Frame* frame, VAddr cpu_address, vk::Extent2
     target.image = vk::Image(fg_hudless_image);
     target.image_view = fg_hudless_view;
     target.is_hdr = frame->is_hdr;
-    draw_scheduler.Record([this, target, input, image_size, fsr = fsr_settings,
-                           pp = pp_settings](vk::CommandBuffer cmdbuf) mutable {
+    const auto& bb_settings = BbSettings::Get();
+    const bool fsr_active = fsr_settings.enable || fsr_settings.use_rcas;
+    const int raw_aa = bb_settings.anti_aliasing.load(std::memory_order_relaxed);
+    const int aa_mode = fsr_active                     ? HostPasses::AaPass::ModeOff
+                        : raw_aa == BbSettings::AaFxaa ? HostPasses::AaPass::ModeFxaa
+                        : raw_aa == BbSettings::AaSmaa ? HostPasses::AaPass::ModeSmaa
+                                                       : HostPasses::AaPass::ModeOff;
+    const bool aa_linear = !pp_settings.srgb_input && !target.is_hdr;
+    draw_scheduler.Record([this, target, input, image_size, fsr = fsr_settings, pp = pp_settings,
+                           aa_mode, aa_linear](vk::CommandBuffer cmdbuf) mutable {
         std::scoped_lock lock{passes_mutex};
         const auto pre_barrier = vk::ImageMemoryBarrier2{
             .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
@@ -1174,9 +1224,12 @@ vk::Image Presenter::PrepareHudless(Frame* frame, VAddr cpu_address, vk::Extent2
             .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &pre_barrier});
-        const vk::ImageView source = fsr_pass.Render(cmdbuf, input, image_size,
-                                                     {target.width, target.height}, fsr,
-                                                     target.is_hdr);
+        vk::ImageView source = fsr_pass.Render(cmdbuf, input, image_size,
+                                               {target.width, target.height}, fsr,
+                                               target.is_hdr);
+        if (aa_mode != HostPasses::AaPass::ModeOff) {
+            source = aa_pass.Render(cmdbuf, source, image_size, aa_mode, aa_linear);
+        }
         pp_pass.Render(cmdbuf, source, image_size, target, pp);
     });
     return vk::Image(fg_hudless_image);

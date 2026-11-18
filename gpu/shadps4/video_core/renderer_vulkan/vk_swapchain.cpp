@@ -10,6 +10,7 @@
 #include "sdl_window.h"
 #include "bbport_settings.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 
 namespace Vulkan {
@@ -52,6 +53,9 @@ void Swapchain::Create(u32 width_, u32 height_) {
     // NVIDIA's Wayland WSI keeps a wp_tearing_control per swapchain; a fresh swapchain on the
     // same surface was rejected ("Surface already has a tearing controller", SurfaceLost).
     const vk::SwapchainKHR old_swapchain = swapchain;
+    if (old_swapchain) {
+        LowLatency::OnSwapchain({});
+    }
     swapchain = nullptr;
     Destroy();
 
@@ -66,6 +70,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
         exclusive ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent;
     const auto format = needs_hdr ? SURFACE_FORMAT_HDR : surface_format;
     const vk::SwapchainCreateInfoKHR swapchain_info = {
+        .pNext = LowLatency::SwapchainCreateNext(),
         .surface = surface,
         .minImageCount = image_count,
         .imageFormat = format.format,
@@ -123,6 +128,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     if (old_swapchain) {
         instance.GetDevice().destroySwapchainKHR(old_swapchain);
     }
+    LowLatency::OnSwapchain(swapchain);
 
     SetupImages();
     RefreshSemaphores();
@@ -186,8 +192,13 @@ bool Swapchain::AcquireNextImage() {
     return !needs_recreation;
 }
 
-bool Swapchain::Present() {
+bool Swapchain::Present(u64 present_id) {
+    const vk::PresentIdKHR present_ids = {
+        .swapchainCount = 1,
+        .pPresentIds = &present_id,
+    };
     const vk::PresentInfoKHR present_info = {
+        .pNext = present_id && instance.IsPresentIdEnabled() ? &present_ids : nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &present_ready[image_index],
         .swapchainCount = 1,
@@ -377,6 +388,7 @@ void Swapchain::Destroy() {
     images_view.clear();
 
     if (swapchain) {
+        LowLatency::OnSwapchain({});
         device.destroySwapchainKHR(swapchain);
     }
 

@@ -21,9 +21,9 @@
 
 namespace {
 
-std::mutex submit_mutex{};
-u32 num_requests{};
+u32 num_requests{}; // queued plus in-flight requests, guarded by m_request
 std::condition_variable_any request_cv{};
+std::condition_variable idle_cv{};
 std::queue<std::packaged_task<void()>> req_queue{};
 std::mutex m_request{};
 
@@ -37,34 +37,30 @@ namespace Storage {
 void ProcessIO(const std::stop_token& stoken) {
     Common::SetCurrentThreadName("shadPS4:PipelineCacheIO");
 
-    while (!stoken.stop_requested()) {
+    for (;;) {
+        std::packaged_task<void()> request{};
         {
-            std::unique_lock lk{submit_mutex};
-            Common::CondvarWait(request_cv, lk, stoken, [&] { return num_requests; });
-        }
-
-        if (stoken.stop_requested()) {
-            break;
-        }
-
-        while (num_requests) {
-            std::packaged_task<void()> request{};
-            {
-                std::scoped_lock lock{m_request};
-                if (req_queue.empty()) {
-                    continue;
-                }
-                request = std::move(req_queue.front());
-                req_queue.pop();
+            std::unique_lock lk{m_request};
+            Common::CondvarWait(request_cv, lk, stoken, [&] { return !req_queue.empty(); });
+            if (req_queue.empty()) {
+                return;
             }
+            request = std::move(req_queue.front());
+            req_queue.pop();
+        }
 
-            if (request.valid()) {
+        if (request.valid()) {
+            try {
                 request();
-                request.get_future().wait();
+            } catch (const std::exception& e) {
+                LOG_ERROR(Render, "Pipeline cache IO write failed: {}", e.what());
             }
-
+        }
+        {
+            std::scoped_lock lk{m_request};
             --num_requests;
         }
+        idle_cv.notify_all();
     }
 }
 
@@ -174,10 +170,9 @@ bool WriteVector(const BlobType type, std::filesystem::path&& path_, std::vector
         }};
         std::scoped_lock lock{m_request};
         req_queue.emplace(std::move(request));
+        ++num_requests;
     }
 
-    std::scoped_lock lk{submit_mutex};
-    ++num_requests;
     request_cv.notify_one();
     return true;
 }
@@ -287,6 +282,20 @@ void DataBase::Clear() {
         }
     }
     LOG_WARNING(Render, "Pipeline cache cleared ({} files): it is rebuilt for this build", removed);
+}
+
+std::filesystem::path DataBase::FolderPath() const {
+    if (!opened || EmulatorSettings.IsPipelineCacheArchived()) {
+        return {};
+    }
+    return cache_path;
+}
+
+void DataBase::Flush() {
+    if (opened) {
+        std::unique_lock lk{m_request};
+        idle_cv.wait(lk, [] { return num_requests == 0; });
+    }
 }
 
 void DataBase::FinishPreload() {

@@ -20,7 +20,16 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum FsrMode : int { FsrModeNative = 0, FsrModeFsr1 = 1, FsrModeRcasOnly = 2 };
-enum class MenuLanguage { English, Russian, Spanish };
+enum AntiAliasingMode : int { AaOff = 0, AaFxaa = 1, AaMsaa2 = 2, AaMsaa4 = 4, AaSmaa = 5 };
+enum class MenuLanguage {
+    English = 0,
+    Russian = 1,
+    Spanish = 2,
+    Indonesian = 3,
+    Japanese = 4,
+    Chinese = 5,
+    Portuguese = 6,
+};
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -123,7 +132,7 @@ struct Values {
     /// Engine: graphics pipelines compiled on worker threads (BB_ASYNC_PIPELINES): a new
     /// shader no longer stops the game; a pass drawn every frame may miss a frame or two.
     /// Experimental (STATUS.md, issue #2). Applies at once. BB_ASYNC_PIPELINES overrides it.
-    std::atomic<bool> async_pipelines{false};
+    std::atomic<bool> async_pipelines{true};
     /// Engine: the game's 2x MSAA (G-buffer and forward passes). Off by default: on the host
     /// GPU, single-sample colour drawn over the 2x depth buffer blends twice along triangle edges
     /// (dotted lines in skies and light shafts, GitHub issues #16/#18), and at the internal
@@ -142,7 +151,7 @@ struct Values {
     std::atomic<int> fsr_mode{FsrModeFsr1};
     /// v2.1: Custom render resolution scale multiplier (0.5-2.0x, 1.0=native)
     std::atomic<float> render_scale{1.0f};
-    /// v2.1: Post-process anti-aliasing (0=off, 1=fxaa, 2=msaa2x, 4=msaa4x)
+    /// v2.1: Post-process anti-aliasing (0=off, 1=fxaa, 2=msaa2x, 4=msaa4x, 5=smaa)
     std::atomic<int> anti_aliasing{1};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
@@ -177,6 +186,9 @@ struct Values {
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
     /// v2.0-Perf: low-end performance mode (forces 720p render + disables RCAS for i3 4-core)
     std::atomic<bool> performance_mode{false};
+    /// bbport: NVIDIA Reflex / AMD Anti-Lag 2 status (0 off, 1 Reflex, 2 Reflex+Boost, 3 Anti-Lag 2)
+    std::atomic<int> latency_mode{0};
+    std::atomic<float> latency_ms{0.0f};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
@@ -200,9 +212,12 @@ Values& Get();
 std::mutex& PortsMutex();
 /// Localized overlay text; the Language selector itself stays in English.
 const char* MenuText(const char* english, const char* russian);
-/// v0.4: the Spanish of an English menu text (bbport_menu_es.cpp); the English one if missing.
+/// v0.4+: localized lookup of an English menu text (bbport_menu_es.cpp); English if missing.
 const char* Spanish(const char* english);
-/// An English-only label in the menu's language (Spanish when chosen, else English).
+const char* TranslateMenu(MenuLanguage lang, const char* english);
+bool TryParseMenuLanguage(const char* code, MenuLanguage& out);
+const char* MenuLanguageCode(MenuLanguage lang);
+/// An English-only label in the menu's language.
 inline const char* Label(const char* english) { return MenuText(english, english); }
 
 /// Reads the file, then the environment overrides. Called once at start.

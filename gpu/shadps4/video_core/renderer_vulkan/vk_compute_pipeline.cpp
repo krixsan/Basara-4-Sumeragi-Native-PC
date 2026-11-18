@@ -115,8 +115,13 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         throw Serialization::CorruptData{"cached compute pipeline rejected by the driver: " +
                                          vk::to_string(pipeline_result)};
     }
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
-               vk::to_string(pipeline_result));
+    if (pipeline_result != vk::Result::eSuccess) {
+        LOG_WARNING(Render_Vulkan, "Compute pipeline {} failed to build: {}", debug_str,
+                    vk::to_string(pipeline_result));
+        std::fprintf(stderr, "[PIPELINE FAILED] compute %s: %s (dispatches skipped)\n",
+                     debug_str.c_str(), vk::to_string(pipeline_result).c_str());
+        return;
+    }
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", debug_str);
 }

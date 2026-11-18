@@ -303,6 +303,15 @@ public:
         return features.tessellationShader;
     }
 
+    /// bbport: GPU checkpoints (VK_NV_device_diagnostic_checkpoints / VK_AMD_buffer_marker).
+    bool HasNvCheckpoints() const {
+        return nv_checkpoints;
+    }
+
+    bool HasAmdBufferMarker() const {
+        return buffer_marker;
+    }
+
     /// Returns true when the shaderSubgroupClock feature of
     /// engine: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
     /// products, linear compute derivatives, extended storage image formats).
@@ -334,6 +343,21 @@ public:
     /// VK_KHR_shader_clock is supported.
     bool IsShaderSubgroupClockSupported() const {
         return shader_clock && shader_clock_features.shaderSubgroupClock;
+    }
+
+    /// bbport: VK_KHR_present_id is enabled.
+    bool IsPresentIdEnabled() const {
+        return present_id;
+    }
+
+    /// bbport: NVIDIA Reflex (VK_NV_low_latency2) is enabled.
+    bool IsNvLowLatencyEnabled() const {
+        return nv_low_latency;
+    }
+
+    /// bbport: AMD Anti-Lag 2 (VK_AMD_anti_lag) is enabled.
+    bool IsAmdAntiLagEnabled() const {
+        return amd_anti_lag;
     }
 
     /// Returns the vendor ID of the physical device
@@ -533,7 +557,7 @@ public:
 private:
     Instance(const Frontend::WindowSystemInfo&, s32, bool, bool);
     /// Creates the logical device opportunistically enabling extensions
-    bool CreateDevice();
+    bool CreateDevice(bool presentation);
 
     /// Creates the VMA allocator handle
     void CreateAllocator();
@@ -604,6 +628,7 @@ private:
     bool maintenance_5{};
     bool maintenance_8{};
     bool buffer_marker{};
+    bool nv_checkpoints{};
     bool attachment_feedback_loop{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
@@ -612,6 +637,9 @@ private:
     bool mixed_float_dot_product{}; // engine: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool cooperative_matrix{};      // engine: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // engine: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
+    bool present_id{};              // bbport: VK_KHR_present_id (for NVIDIA Reflex markers)
+    bool nv_low_latency{};          // bbport: VK_NV_low_latency2
+    bool amd_anti_lag{};            // bbport: VK_AMD_anti_lag
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};

@@ -35,7 +35,7 @@ typedef struct stat HostStat;
 #endif
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define MAX_FILES 1024
-#define MAX_MOUNTS 16
+#define MAX_MOUNTS 128
 
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 typedef struct {
@@ -147,6 +147,9 @@ void runtime_file_configure(const char *app0,const char *user) {
     runtime_file_mount("/app0",game_dir);
     runtime_file_mount("/hostapp",game_dir);
     runtime_file_mount("/data",game_dir);
+    runtime_file_mount("/addcont", "./extracted_game/addcont");
+    runtime_file_mount("/addcont0", "./extracted_game/addcont");
+    runtime_file_mount("/dlc", "./extracted_game/app0/dlc");
     const char *writable[]={"temp0","download0"};
     mkdir(user,0755);
     for (int i=0;i<2;++i) {
@@ -174,6 +177,19 @@ static int translate(const char *guest,char *out,size_t size) {
     if (!m) result=ENOENT;
     else if ((size_t)snprintf(out,size,"%s%s",m->host,buffer+best)>=size) result=ENAMETOOLONG;
     pthread_mutex_unlock(&lock);
+    if (result==ENOENT || (result==0 && strstr(buffer, ".dlcp"))) {
+        const char *slash = strrchr(buffer, '/');
+        const char *fname = slash ? slash + 1 : buffer;
+        if (strstr(fname, ".dlcp")) {
+            char trial[1024];
+            HostStat st;
+            snprintf(trial, sizeof(trial), "extracted_game/addcont/%s", fname);
+            if (!host_stat(trial, &st)) {
+                snprintf(out, size, "%s", trial);
+                result = 0;
+            }
+        }
+    }
     if (result==ENOENT) fprintf(stderr,"Runtime: no mount for guest path %s\n",guest);
     /* BB_FILE_TRACE=1: every guest path the game opens, stats or checks (mods, missing files). */
     static int trace=-1;

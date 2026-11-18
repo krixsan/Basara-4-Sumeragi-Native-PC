@@ -71,6 +71,8 @@ uintptr_t runtime_time_resolve(const char *name);
 void runtime_content_configure(const uint32_t values[5]);
 /* An installed add-on (DLC): its 16-character entitlement label (scripts/content_profile.py). */
 void runtime_content_add_addon(const char *label);
+int runtime_content_configure_dlc_dir(const char *path);
+int runtime_content_addon_index(uint32_t service_label, const char *label);
 uintptr_t runtime_content_resolve(const char *name);
 void runtime_content_report(void);
 typedef struct { const char *name; void *function; } RuntimeExport;
@@ -124,6 +126,7 @@ uintptr_t runtime_ajm_resolve(const char *name);
 void runtime_ajm_report(void);
 uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
+void runtime_audio_shutdown(void);
 void runtime_audio_catchup_render(const void *data, uint32_t frames);
 void runtime_audio_play_movie_pcm16(const void *pcm16, uint32_t size_bytes, uint32_t channels, uint32_t sample_rate);
 uintptr_t runtime_pad_resolve(const char *name);

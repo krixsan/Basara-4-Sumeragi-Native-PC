@@ -67,6 +67,7 @@ typedef struct {
 #endif
     int silent, fade_pos;           /* underrun recovery: ramp to zero, then ramp new data in */
     float last_l, last_r, fade_l, fade_r;
+    float limiter_gain;             /* sotc #426: dynamic envelope gain follower */
     unsigned underruns;
 } Port;
 typedef struct { uint16_t output; uint8_t channel, reserved; int16_t volume; uint16_t reroute; uint64_t flag, reserved64[2]; } PortState;
@@ -159,6 +160,25 @@ static inline float audio_soft_limit(float x) {
     } else {
         float over = -x - 0.7f;
         return -(0.7f + 0.295f * tanhf(over / 0.295f));
+    }
+}
+/* SotC #426: above threshold (and in multi-channel downmix/hits) a limiter with an
+ * envelope keeps loud moments under control: gain drops in ~1 ms (attack) and recovers
+ * over ~250 ms (release). Prevents audio clipping when multiple enemies are hit simultaneously. */
+#define LIMITER_THRESHOLD 0.8f
+static inline void limit_frame(Port *p, float *v, int n) {
+    static const float attack = 0.0206f, release = 0.0000833f;
+    float peak = 0.0f;
+    for (int c = 0; c < n; ++c) {
+        float a = fabsf(v[c]);
+        if (a > peak) peak = a;
+    }
+    float target = peak > LIMITER_THRESHOLD ? LIMITER_THRESHOLD / peak : 1.0f;
+    float g = p->limiter_gain;
+    g += (target - g) * (target < g ? attack : release);
+    p->limiter_gain = g;
+    for (int c = 0; c < n; ++c) {
+        v[c] = audio_soft_limit(v[c] * g);
     }
 }
 /* Dedicated feeder: keeps the SDL stream at four periods, takes PCM from the ring, and when the
@@ -279,8 +299,8 @@ static void *feeder_main(void *arg) {
                 r+=s_movie_ring[mr*2+1];
                 s_movie_read=(mr+1)%MOVIE_RING_FRAMES;
                 --s_movie_avail;
-                if (l>1.0f) l=1.0f; else if (l<-1.0f) l=-1.0f;
-                if (r>1.0f) r=1.0f; else if (r<-1.0f) r=-1.0f;
+                l = audio_soft_limit(l);
+                r = audio_soft_limit(r);
             }
             p->last_l=l; p->last_r=r;
             mix[i*2+0]=l; mix[i*2+1]=r;
@@ -343,6 +363,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
         p->prefill_frames=(uint32_t)((uint64_t)value*48000u/1000u);
     }
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
+    p->limiter_gain = 1.0f;
     if (sdl_audio()) {
         SDL_AudioSpec spec={SDL_AUDIO_F32, 2, 48000};
         p->stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,NULL,NULL);
@@ -458,12 +479,12 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
                 L_out = ch[0];
                 R_out = ch[0];
             }
-            L_out = audio_soft_limit(L_out);
-            R_out = audio_soft_limit(R_out);
-            stereo[f * 2 + 0] = L_out;
-            stereo[f * 2 + 1] = R_out;
-            float abs_l = fabsf(L_out);
-            float abs_r = fabsf(R_out);
+            float frame_sample[2] = { L_out, R_out };
+            limit_frame(p, frame_sample, 2);
+            stereo[f * 2 + 0] = frame_sample[0];
+            stereo[f * 2 + 1] = frame_sample[1];
+            float abs_l = fabsf(frame_sample[0]);
+            float abs_r = fabsf(frame_sample[1]);
             if (abs_l > peak) peak = abs_l;
             if (abs_r > peak) peak = abs_r;
         }
@@ -660,3 +681,21 @@ static const RuntimeExport exports[]={
 };
 uintptr_t runtime_audio_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 void runtime_audio_report(void) { printf("Runtime: audio ports opened=%zu, buffers output=%zu\n",ports_opened,buffers_out); }
+void runtime_audio_shutdown(void) {
+    pthread_mutex_lock(&table_lock);
+    for (int i = 0; i < PORTS; ++i) {
+        Port *p = &ports[i];
+        if (p->used && p->feeder_running) {
+            pthread_mutex_lock(&p->lock);
+            p->feeder_stop = 1;
+            pthread_mutex_unlock(&p->lock);
+            pthread_join(p->feeder, NULL);
+            p->feeder_running = 0;
+            if (p->stream) {
+                SDL_DestroyAudioStream(p->stream);
+                p->stream = NULL;
+            }
+        }
+    }
+    pthread_mutex_unlock(&table_lock);
+}

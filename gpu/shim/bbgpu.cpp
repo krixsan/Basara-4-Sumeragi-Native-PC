@@ -268,6 +268,8 @@ static void StartProfileWriter() {
 }
 #endif
 
+extern "C" void runtime_audio_shutdown(void);
+
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
 #ifdef BB_PGO_GENERATE
@@ -298,8 +300,10 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
         while (window->PollEvents()) {
             SDL_Delay(2);
         }
-        LOG_INFO(Frontend, "Window closed by user");
+        LOG_INFO(Frontend, "Window closed by user - performing clean teardown");
+        runtime_audio_shutdown();
         std::fflush(stdout);
+        std::fflush(stderr);
         std::_Exit(0);
     });
     g_window_thread.detach();

@@ -181,6 +181,7 @@ private:
                                    Shader::Backend::Bindings& binding);
     const Shader::RuntimeInfo& BuildRuntimeInfo(PipelineSelection& sel, Shader::HwStage stage,
                                                 Shader::SwStage l_stage);
+    void PrebuildFromRecipe();
 
 public:
     [[nodiscard]] bool IsPipelineCacheDirty() const {
@@ -229,6 +230,7 @@ private:
     const GraphicsPipeline* FinishPipeline(const GraphicsPipelineKey& key, PendingPipeline& job);
     tsl::robin_map<GraphicsPipelineKey, std::shared_ptr<PendingPipeline>> pending_graphics;
     u64 async_started = 0, async_skipped = 0, async_waited = 0; ///< statistics
+    u64 recipe_id = 0; ///< SacredFire: the shader recipe of this session (0: none)
     std::unique_ptr<PipelineCompiler> compiler; ///< last: its threads are joined first
 };
 

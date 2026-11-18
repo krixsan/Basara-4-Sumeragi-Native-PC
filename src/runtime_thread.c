@@ -54,6 +54,7 @@ static void set_thread_priority_highest(HANDLE thread) {
 #define MIN_STACK (2048*1024)
 #define DEFAULT_STACK (2048*1024)
 #define DEFAULT_PRIO 700
+#define MAX_ACTIVE_THREADS 128
 
 typedef void *(ABI *GuestEntry)(void *);
 typedef struct ThreadAttr {
@@ -477,6 +478,16 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
     if (!out || !entry) return ERR(22);
     ThreadAttr *a=NULL;
     if (attr_slot && !(a=find_attr(attr_slot))) return ERR(22);
+
+    pthread_mutex_lock(&lock);
+    size_t active_count = (created >= exited) ? (created - exited) : 0;
+    pthread_mutex_unlock(&lock);
+    if (active_count >= MAX_ACTIVE_THREADS) {
+        fprintf(stderr, "[Thread] WARNING: active thread limit reached (%zu >= %d), rejecting '%s'\n",
+                active_count, MAX_ACTIVE_THREADS, name ? name : "guest");
+        return ERR(11); /* SCE_KERNEL_ERROR_EAGAIN */
+    }
+
     GuestThread *t=new_thread();
     if (!t) return ERR(12);
     if (a) { t->attr=*a; t->attr.next=NULL; }
@@ -505,8 +516,33 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
     /* Publish the handle before the thread can run and inspect itself. */
     *out=t;
     int e=pthread_create(&t->host,&host,host_start,t);
+    if (e) {
+        /* Retry with system default stack size if custom stack reservation failed */
+        pthread_attr_t fallback_host;
+        pthread_attr_init(&fallback_host);
+        e = pthread_create(&t->host, &fallback_host, host_start, t);
+        pthread_attr_destroy(&fallback_host);
+    }
     pthread_attr_destroy(&host);
-    if (e) { fprintf(stderr,"STOP: host pthread_create failed: %d\n",e); exit(21); }
+    if (e) {
+        fprintf(stderr, "[Thread] WARNING: host pthread_create failed for '%s': %d (win32=%lu)\n",
+                t->name, e, (unsigned long)GetLastError());
+        pthread_mutex_lock(&lock);
+        if (threads == t) {
+            threads = t->next;
+        } else {
+            for (GuestThread *cur = threads; cur; cur = cur->next) {
+                if (cur->next == t) {
+                    cur->next = t->next;
+                    break;
+                }
+            }
+        }
+        pthread_mutex_unlock(&lock);
+        free(t);
+        *out = NULL;
+        return ERR(11); /* SCE_KERNEL_ERROR_EAGAIN */
+    }
     if (t->detached) pthread_detach(t->host);
     pthread_mutex_lock(&lock); ++created; pthread_mutex_unlock(&lock);
     {

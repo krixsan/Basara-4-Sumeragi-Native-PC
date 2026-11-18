@@ -28,6 +28,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "video_core/renderer_vulkan/vk_checkpoints.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -549,40 +550,106 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
 
     const bool skip_cb_binding =
         regs.color_control.mode == AmdGpu::ColorControl::OperationMode::Disable;
-    for (s32 cb = 0; cb < std::bit_width(key.mrt_mask); ++cb) {
-        auto& [image_id, desc] = cb_descs[cb];
-        const auto& col_buf = regs.color_buffers[cb];
-        const u32 target_mask = regs.color_target_mask.GetMask(cb);
-        if (skip_cb_binding || !col_buf || !target_mask || (key.mrt_mask & (1 << cb)) == 0) {
-            image_id = {};
-            continue;
-        }
-        const auto& hint = CbExtent(cb);
-        const u32 tag = 1;
-        image_id = bound_images.emplace_back(FindTargetMemoized(
-            desc, last_targets[cb], [&] { std::construct_at(&desc, col_buf, hint); }, tag,
-            col_buf, hint));
-        auto& image = texture_cache.GetImage(image_id);
-        image.binding.is_target = 1u;
+    const s32 num_cb = std::bit_width(key.mrt_mask);
+    u32 active_mask = 0;
+    for (s32 cb = 0; cb < num_cb; ++cb) {
+        active_mask |= u32{regs.color_target_mask.GetMask(cb) != 0} << cb;
     }
 
-    if ((regs.depth_control.depth_enable && regs.depth_buffer.DepthValid()) ||
-        (regs.depth_control.stencil_enable && regs.depth_buffer.StencilValid())) {
-        const auto htile_address = regs.depth_htile_data_base.GetAddress();
-        const auto& hint = DbExtent();
-        auto& [image_id, desc] = db_desc;
-        const u32 tag = 2;
-        image_id = bound_images.emplace_back(FindTargetMemoized(
-            desc, last_targets[AmdGpu::NUM_COLOR_BUFFERS],
-            [&] {
-                std::construct_at(&desc, regs.depth_buffer, regs.depth_view, regs.depth_control,
-                                  htile_address, hint);
-            },
-            tag, regs.depth_buffer, regs.depth_view, regs.depth_control, htile_address, hint));
-        auto& image = texture_cache.GetImage(image_id);
-        image.binding.is_target = 1u;
+    const bool depth_enable = regs.depth_control.depth_enable && regs.depth_buffer.DepthValid();
+    const bool stencil_enable = regs.depth_control.stencil_enable && regs.depth_buffer.StencilValid();
+    const bool depth_write = regs.depth_control.depth_write_enable;
+    const auto htile_address = (depth_enable || stencil_enable) ? regs.depth_htile_data_base.GetAddress() : 0;
+    const u64 img_gen = texture_cache.RegistryGeneration();
+
+    bool hit = rt_fast_memo.valid &&
+               rt_fast_memo.mrt_mask == key.mrt_mask &&
+               rt_fast_memo.active_mask == active_mask &&
+               rt_fast_memo.skip_cb_binding == skip_cb_binding &&
+               rt_fast_memo.depth_enable == depth_enable &&
+               rt_fast_memo.stencil_enable == stencil_enable &&
+               rt_fast_memo.depth_write == depth_write &&
+               rt_fast_memo.htile_address == htile_address &&
+               rt_fast_memo.image_generation == img_gen &&
+               (!depth_enable && !stencil_enable ||
+                (std::memcmp(&rt_fast_memo.depth_buffer, &regs.depth_buffer, sizeof(regs.depth_buffer)) == 0 &&
+                 std::memcmp(&rt_fast_memo.depth_view, &regs.depth_view, sizeof(regs.depth_view)) == 0 &&
+                 rt_fast_memo.db_extent.raw == DbExtent().raw));
+
+    if (hit && num_cb > 0 && !skip_cb_binding) {
+        for (s32 cb = 0; cb < num_cb; ++cb) {
+            if ((key.mrt_mask & (1 << cb)) && (active_mask & (1 << cb))) {
+                if (std::memcmp(&rt_fast_memo.color_buffers[cb], &regs.color_buffers[cb], sizeof(regs.color_buffers[cb])) != 0 ||
+                    rt_fast_memo.cb_extents[cb].raw != CbExtent(cb).raw) {
+                    hit = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (hit) {
+        // Lukto02 Fast Path Hit: rebind active targets without hash lookup overhead
+        for (s32 cb = 0; cb < num_cb; ++cb) {
+            if (cb_descs[cb].first) {
+                bound_images.push_back(cb_descs[cb].first);
+            }
+        }
+        if (db_desc.first) {
+            bound_images.push_back(db_desc.first);
+        }
     } else {
-        db_desc.first = {};
+        for (s32 cb = 0; cb < num_cb; ++cb) {
+            auto& [image_id, desc] = cb_descs[cb];
+            const auto& col_buf = regs.color_buffers[cb];
+            const u32 target_mask = regs.color_target_mask.GetMask(cb);
+            if (skip_cb_binding || !col_buf || !target_mask || (key.mrt_mask & (1 << cb)) == 0) {
+                image_id = {};
+                continue;
+            }
+            const auto& hint = CbExtent(cb);
+            const u32 tag = 1;
+            image_id = bound_images.emplace_back(FindTargetMemoized(
+                desc, last_targets[cb], [&] { std::construct_at(&desc, col_buf, hint); }, tag,
+                col_buf, hint));
+            auto& image = texture_cache.GetImage(image_id);
+            image.binding.is_target = 1u;
+        }
+
+        if (depth_enable || stencil_enable) {
+            const auto& hint = DbExtent();
+            auto& [image_id, desc] = db_desc;
+            const u32 tag = 2;
+            image_id = bound_images.emplace_back(FindTargetMemoized(
+                desc, last_targets[AmdGpu::NUM_COLOR_BUFFERS],
+                [&] {
+                    std::construct_at(&desc, regs.depth_buffer, regs.depth_view, regs.depth_control,
+                                      htile_address, hint);
+                },
+                tag, regs.depth_buffer, regs.depth_view, regs.depth_control, htile_address, hint));
+            auto& image = texture_cache.GetImage(image_id);
+            image.binding.is_target = 1u;
+        } else {
+            db_desc.first = {};
+        }
+
+        // Store to memo
+        rt_fast_memo.valid = true;
+        rt_fast_memo.mrt_mask = key.mrt_mask;
+        rt_fast_memo.active_mask = active_mask;
+        rt_fast_memo.skip_cb_binding = skip_cb_binding;
+        rt_fast_memo.depth_enable = depth_enable;
+        rt_fast_memo.stencil_enable = stencil_enable;
+        rt_fast_memo.depth_write = depth_write;
+        rt_fast_memo.htile_address = htile_address;
+        rt_fast_memo.image_generation = img_gen;
+        std::memcpy(&rt_fast_memo.depth_buffer, &regs.depth_buffer, sizeof(regs.depth_buffer));
+        std::memcpy(&rt_fast_memo.depth_view, &regs.depth_view, sizeof(regs.depth_view));
+        rt_fast_memo.db_extent = DbExtent();
+        for (s32 cb = 0; cb < num_cb; ++cb) {
+            std::memcpy(&rt_fast_memo.color_buffers[cb], &regs.color_buffers[cb], sizeof(regs.color_buffers[cb]));
+            rt_fast_memo.cb_extents[cb] = CbExtent(cb);
+        }
     }
     // engine: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
     // main camera (shadow passes bind the same layout with the light's camera).
@@ -1700,6 +1767,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
         .count = {num_indices, num_instances, 0},
     };
+    const u32 checkpoint = Checkpoints::Note("draw vs/ps/indices", vs_info.pgm_hash,
+                                             ps_info ? ps_info->pgm_hash : 0, num_indices);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         static thread_local vk::Pipeline bound_pipe = VK_NULL_HANDLE;
         static thread_local vk::CommandBuffer bound_cmdbuf = VK_NULL_HANDLE;
@@ -1708,11 +1777,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             bound_pipe = handle;
             bound_cmdbuf = cmdbuf;
         }
+        Checkpoints::Start(cmdbuf, checkpoint);
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
         } else {
             cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
         }
+        Checkpoints::Finish(cmdbuf, checkpoint);
     });
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
@@ -1847,6 +1918,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         .address = indirect.args,
         .count = {max_count, stride, 0},
     };
+    const u32 checkpoint = Checkpoints::Note("draw indirect vs/ps/count",
+                                             vs_crumb ? vs_crumb->pgm_hash : 0,
+                                             ps_crumb ? ps_crumb->pgm_hash : 0, max_count);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         static thread_local vk::Pipeline bound_pipe = VK_NULL_HANDLE;
         static thread_local vk::CommandBuffer bound_cmdbuf = VK_NULL_HANDLE;
@@ -1855,6 +1929,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
             bound_pipe = handle;
             bound_cmdbuf = cmdbuf;
         }
+        Checkpoints::Start(cmdbuf, checkpoint);
         if (is_indexed) {
             if (counts) {
                 cmdbuf.drawIndexedIndirectCount(args, args_offset, counts, counts_offset, max_count,
@@ -1867,6 +1942,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         } else {
             cmdbuf.drawIndirect(args, args_offset, max_count, stride);
         }
+        Checkpoints::Finish(cmdbuf, checkpoint);
     });
     DebugState.IncDrawCall();
 
@@ -1951,9 +2027,13 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         .program = {cs.ProgramBase(), 0},
         .count = {dim_x, dim_y, dim_z},
     };
+    const u32 checkpoint = Checkpoints::Note("dispatch cs/groups", cs.pgm_hash, 0,
+                                             u64(dim_x) * dim_y * dim_z);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
+        Checkpoints::Start(cmdbuf, checkpoint);
         cmdbuf.dispatch(dim_x, dim_y, dim_z);
+        Checkpoints::Finish(cmdbuf, checkpoint);
     });
     DebugState.IncDispatch();
 
@@ -2015,10 +2095,13 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         .count = {buffer_cache.IsInPlace(address, size) ? 1u : 0u, 0, 0},
         .args_slot = args_slot,
     };
+    const u32 checkpoint = Checkpoints::Note("dispatch indirect cs", cs_crumb.pgm_hash);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         Breadcrumbs::CopyArgs(cmdbuf, args, args_offset, args_slot);
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
+        Checkpoints::Start(cmdbuf, checkpoint);
         cmdbuf.dispatchIndirect(args, args_offset);
+        Checkpoints::Finish(cmdbuf, checkpoint);
     });
     DebugState.IncDispatch();
 

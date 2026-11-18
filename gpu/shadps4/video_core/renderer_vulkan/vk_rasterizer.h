@@ -523,6 +523,23 @@ private:
         VideoCore::ImageId image_id{};
     };
     std::array<LastTarget, AmdGpu::NUM_COLOR_BUFFERS + 1> last_targets{}; ///< CBs, then DB
+    /// Lukto02 (SotC fast-path): Memo of the last draw's render target state to bypass redundant hash lookups
+    struct RtFastMemo {
+        bool valid = false;
+        u32 mrt_mask = 0;
+        u32 active_mask = 0;
+        bool skip_cb_binding = false;
+        bool depth_enable = false;
+        bool stencil_enable = false;
+        bool depth_write = false;
+        u64 htile_address = 0;
+        u64 image_generation = 0;
+        AmdGpu::DepthBuffer depth_buffer{};
+        AmdGpu::DepthView depth_view{};
+        std::array<AmdGpu::ColorBuffer, AmdGpu::NUM_COLOR_BUFFERS> color_buffers{};
+        std::array<AmdGpu::CbDbExtent, AmdGpu::NUM_COLOR_BUFFERS> cb_extents{};
+        AmdGpu::CbDbExtent db_extent{};
+    } rt_fast_memo{};
     template <typename... Parts>
     VideoCore::ImageId FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
                                           LastTarget& last, auto&& make_desc,

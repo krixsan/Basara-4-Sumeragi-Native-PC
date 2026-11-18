@@ -13,8 +13,10 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_checkpoints.h"
 #include "video_core/renderer_vulkan/vk_dlss_ngx.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
 #include <vk_mem_alloc.h>
@@ -196,7 +198,7 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
                VK_VERSION_MAJOR(TargetVulkanApiVersion), VK_VERSION_MINOR(TargetVulkanApiVersion),
                VK_VERSION_MAJOR(properties.apiVersion), VK_VERSION_MINOR(properties.apiVersion));
 
-    CreateDevice();
+    CreateDevice(window_info.type != Frontend::WindowSystemType::Headless);
     CollectPhysicalMemoryInfo();
     CollectImageFormatInfo();
     CollectToolingInfo();
@@ -229,7 +231,7 @@ std::string Instance::GetDriverVersionName() {
     return GetReadableVersion(version);
 }
 
-bool Instance::CreateDevice() {
+bool Instance::CreateDevice(bool presentation) {
     const vk::StructureChain feature_chain = physical_device.getFeatures2<
         vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
         vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
@@ -241,7 +243,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
         vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR,
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
-        vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT>();
+        vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
+        vk::PhysicalDevicePresentIdFeaturesKHR, vk::PhysicalDeviceAntiLagFeaturesAMD>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -299,6 +302,9 @@ bool Instance::CreateDevice() {
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     // engine: GPU breadcrumbs (vk_breadcrumbs.h).
     buffer_marker = add_extension(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+    if (Checkpoints::Wanted()) {
+        nv_checkpoints = add_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    }
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
     if (attachment_feedback_loop) {
         attachment_feedback_loop =
@@ -408,6 +414,16 @@ bool Instance::CreateDevice() {
     }
     const bool calibrated_timestamps =
         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
+
+    // bbport: low latency (BB_LOW_LATENCY=auto|on|boost|off): NVIDIA Reflex, else AMD Anti-Lag 2.
+    if (presentation && LowLatency::Wanted(GetVendorID())) {
+        present_id = feature_chain.get<vk::PhysicalDevicePresentIdFeaturesKHR>().presentId &&
+                     add_extension(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+        nv_low_latency = present_id && add_extension(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+        amd_anti_lag = !nv_low_latency &&
+                       feature_chain.get<vk::PhysicalDeviceAntiLagFeaturesAMD>().antiLag &&
+                       add_extension(VK_AMD_ANTI_LAG_EXTENSION_NAME);
+    }
 
     const auto family_properties = physical_device.getQueueFamilyProperties();
     if (family_properties.empty()) {
@@ -634,6 +650,12 @@ bool Instance::CreateDevice() {
             .shaderFloat8 = true,
             .shaderFloat8CooperativeMatrix = true,
         },
+        vk::PhysicalDevicePresentIdFeaturesKHR{
+            .presentId = true,
+        },
+        vk::PhysicalDeviceAntiLagFeaturesAMD{
+            .antiLag = true,
+        },
     };
 
     if (!custom_border_color) {
@@ -697,6 +719,12 @@ bool Instance::CreateDevice() {
     if (!shader_float8) {
         device_chain.unlink<vk::PhysicalDeviceShaderFloat8FeaturesEXT>();
     }
+    if (!present_id) {
+        device_chain.unlink<vk::PhysicalDevicePresentIdFeaturesKHR>();
+    }
+    if (!amd_anti_lag) {
+        device_chain.unlink<vk::PhysicalDeviceAntiLagFeaturesAMD>();
+    }
 
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
     if (device_result != vk::Result::eSuccess) {
@@ -706,6 +734,7 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    LowLatency::Init(*this);
     if (auto* dlss = DlssNgx::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }
@@ -749,6 +778,7 @@ bool Instance::CreateDevice() {
     }
 
     CreateAllocator();
+    Checkpoints::Init(*this);
     return true;
 }
 

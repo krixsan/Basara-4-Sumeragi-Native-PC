@@ -429,8 +429,13 @@ GraphicsPipeline::GraphicsPipeline(
         throw Serialization::CorruptData{"cached graphics pipeline rejected by the driver: " +
                                          vk::to_string(pipeline_result)};
     }
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
-               vk::to_string(pipeline_result));
+    if (pipeline_result != vk::Result::eSuccess) {
+        LOG_WARNING(Render_Vulkan, "Cached/created graphics pipeline {} failed to build: {}", debug_str,
+                    vk::to_string(pipeline_result));
+        std::fprintf(stderr, "[PIPELINE FAILED] graphics %s: %s (draws skipped)\n",
+                     debug_str.c_str(), vk::to_string(pipeline_result).c_str());
+        return;
+    }
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_str);
 }

@@ -34,6 +34,9 @@ public:
     void FinishPreload();
     /// engine: removes every cached blob (an incompatible cache is rebuilt, not ignored).
     void Clear();
+    [[nodiscard]] std::filesystem::path FolderPath() const;
+    /// Wait until every queued Save() has reached disk (for recipe prebuild).
+    void Flush();
 
     bool Save(BlobType type, const std::string& name, std::vector<u8>&& data);
     bool Save(BlobType type, const std::string& name, std::vector<u32>&& data);

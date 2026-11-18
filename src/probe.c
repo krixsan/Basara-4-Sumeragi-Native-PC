@@ -893,10 +893,21 @@ void runtime_restart(void) {
 #endif
 }
 
+#ifdef _WIN32
+static BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) {
+    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_CLOSE_EVENT || ctrl_type == CTRL_BREAK_EVENT) {
+        runtime_audio_shutdown();
+        _exit(0);
+    }
+    return FALSE;
+}
+#endif
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 #ifdef _WIN32
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
     log_init();
     LOG_INFO("probe", "Sengoku Basara 4 Sumeragi PC Engine starting");
     fprintf(stderr, "[ENGINE] Sengoku Basara 4 Sumeragi PC Native Port v2.1.1\n");
@@ -1002,7 +1013,7 @@ int main(int argc, char **argv) {
 #endif
     int cpu_only = 0, strict_imports = 0, list_imports = 0;
     unsigned timeout_seconds = 10;
-    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *import_names=NULL, *isa_file=NULL;
+    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *import_names=NULL, *isa_file=NULL, *dlc_dir=NULL;
     const char *boot_path = "out/boot-linked.bin";
     int boot_arg_idx = -1;
     for (int i = 1; i < argc; ++i) {
@@ -1012,6 +1023,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--list-imports")) { list_imports = 1; cpu_only = 1; }
         else if (!strcmp(argv[i], "--import-names") && i+1<argc) import_names=argv[++i];
         else if (!strcmp(argv[i], "--content-profile") && i+1<argc) content_profile=argv[++i];
+        else if (!strcmp(argv[i], "--dlc-dir") && i+1<argc) dlc_dir=argv[++i];
         else if (!strcmp(argv[i], "--app0") && i+1<argc) app0=argv[++i];
         else if (!strcmp(argv[i], "--user") && i+1<argc) user_dir=argv[++i];
         else if (!strcmp(argv[i], "--patches") && i+1<argc) patch_file=argv[++i];
@@ -1022,7 +1034,7 @@ int main(int argc, char **argv) {
     }
     FILE *probe_boot = fopen(boot_path, "rb");
     if (!probe_boot) {
-        fprintf(stderr, "Cannot open boot file '%s'. Usage: %s boot.bin [--cpu-only] [--strict-imports] [--list-imports] [--import-names file] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--isa-rewrite file] [--timeout seconds] | --vulkan-only | --cpu-features\n", boot_path, argv[0]);
+        fprintf(stderr, "Cannot open boot file '%s'. Usage: %s boot.bin [--cpu-only] [--strict-imports] [--list-imports] [--import-names file] [--content-profile file] [--dlc-dir dir] [--app0 dir] [--user dir] [--patches file] [--isa-rewrite file] [--timeout seconds] | --vulkan-only | --cpu-features\n", boot_path, argv[0]);
         return 1;
     }
     fclose(probe_boot);
@@ -1037,6 +1049,10 @@ int main(int argc, char **argv) {
     if (!content_profile) {
         FILE *probe_content = fopen("out/content.bin", "rb");
         if (probe_content) { fclose(probe_content); content_profile = "out/content.bin"; }
+        else {
+            FILE *probe_root = fopen("content.bin", "rb");
+            if (probe_root) { fclose(probe_root); content_profile = "content.bin"; }
+        }
     }
     if (!patch_file) {
         FILE *probe_patches = fopen("out/patches.bin", "rb");
@@ -1064,7 +1080,7 @@ int main(int argc, char **argv) {
         /* BBCONT01: SKU and the four user-defined parameters. BBCONT02 adds the installed
          * add-ons (DLC): a count and 20-byte entitlement labels (scripts/content_profile.py). */
         FILE *profile=fopen(content_profile,"rb");
-        static unsigned char data[32+64*20+1];
+        static unsigned char data[32+128*20+1];
         if (!profile) fail("cannot open content profile");
         size_t size=fread(data,1,sizeof(data),profile);
         fclose(profile);
@@ -1077,8 +1093,17 @@ int main(int argc, char **argv) {
         }
         runtime_content_configure(values);
         if (v2) {
-            if (values[5]>64 || size!=32+values[5]*20) fail("invalid content profile add-on list");
+            if (values[5]>128 || size!=32+values[5]*20) fail("invalid content profile add-on list");
             for (uint32_t i=0;i<values[5];++i) runtime_content_add_addon((const char *)data+32+i*20);
+        }
+    }
+    if (!dlc_dir) {
+        FILE *probe_dlc = fopen("DLC/SB4S PS4/JP0102-CUSA01159_00-DLCXBGM024-A0000-V0100/sce_sys/param.sfo", "rb");
+        if (probe_dlc) { fclose(probe_dlc); dlc_dir = "DLC/SB4S PS4"; }
+    }
+    if (dlc_dir) {
+        if (runtime_content_configure_dlc_dir(dlc_dir) != 0) {
+            fprintf(stderr, "DLC: warning, failed to configure DLC directory '%s'\n", dlc_dir);
         }
     }
     if (app0) {

@@ -32,7 +32,7 @@ public:
     bool AcquireNextImage();
 
     /// Presents the current image and move to the next one
-    bool Present();
+    bool Present(u64 present_id = 0);
 
     /// Engine: frame generation paces its two presents itself unless FIFO does.
     vk::PresentModeKHR GetPresentMode() const {
