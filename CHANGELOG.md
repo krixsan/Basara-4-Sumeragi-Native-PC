@@ -2,44 +2,22 @@
 
 ## [v2.1.2] - 2026-11-18
 
-### 🌐 i18n — 7-Language Support
-- Tambah dukungan 7 bahasa penuh di Launcher GUI: **Indonesia, English, 日本語, 中文, Español, Português, Русский**
-- Tombol pilih bahasa (🌐) di sudut kanan atas launcher
-- Semua label, tooltip, tombol, section heading, dan dialog popup sudah terlokalisasi
-- Settingan bahasa disimpan ke `basara.ini` (`menu_language=`) dan diteruskan ke overlay via `BB_MENU_LANGUAGE`
+### ✨ New Features
+- **7-Language Support** — Launcher now fully supports Indonesian, English, 日本語, 中文, Español, Português, and Русский. Switch language anytime from the 🌐 button in the top-right corner.
+- **Auto-Optimize** — New ✨ button detects your GPU and RAM automatically and applies the best graphics preset for your hardware. No manual tuning needed.
 
-### ✨ Auto-Optimize (Deteksi Spesifikasi PC)
-- Tombol baru **✨ Auto-Optimize**: mendeteksi GPU & RAM secara otomatis (via `wmic`)
-- Profil preset otomatis: NVIDIA → Reflex+SMAA+FSR, AMD → AntiLag+SMAA+FSR, GPU lemah → FSR Performance, GPU high-end → SMAA tanpa FSR
-- Settingan langsung diterapkan ke `basara.ini` dan UI diperbarui real-time
-- Deteksi berjalan di background thread (tidak freeze launcher)
+### 🔧 Fixes
+- **DLC Installer** — Fixed "Script not found" error on systems without Python installed. All required modules are now bundled inside the launcher.
+- **Shader Precompile** — Fixed precompile failing silently on fresh installs.
 
-### ⚡ Shader Precompile Enhancement
-- Shader recipe builder (`tools/shader_recipe.py`) sekarang ter-embed di dalam `Basara4_Launcher.exe` — tidak perlu Python terinstall
-- Semua modul engine (`content_profile`, `gcn_shaders`, `mods`, `patches`, dll.) ter-embed di `.exe`
+### 🎮 In-Game Overlay
+- Settings menu now displays in all 7 supported languages.
 
-### 🎮 Cheats Manager — Lokalisasi 7 Bahasa
-- Window title, header, dan deskripsi cheat terlokalisasi semua 7 bahasa
-- Hapus branding pihak ketiga — kini mandiri sebagai "Cheats Manager"
+### ⚡ Performance
+- Reduced micro-stutters caused by shader pipeline compilation during gameplay.
+- Improved audio stability when many sound effects play simultaneously.
+- Cleaner shutdown — game no longer lingers in Task Manager after closing.
 
-### 📦 Batch DLC Installer — Lokalisasi 7 Bahasa
-- Semua teks UI: judul window, kolom tabel, status, tombol, pesan sukses/error — sudah terlokalisasi
-- Fix bug subtitle tertimpa oleh toolbar buttons
-
-### 🔧 Fix: DLC Install Error (content_profile)
-- Fix `Script content_profile.py tidak ditemukan di tools/ atau scripts/` pada laptop baru tanpa Python
-- `basara4_dlc.py` refactored: gunakan direct import dari embedded module, bukan subprocess
-- Fallback subprocess tetap ada untuk dev mode
-
-### 🧹 Build & Packaging
-- `Basara4_Launcher.exe` di-rebuild dengan PyInstaller 6.22.3 — semua modul runtime ter-embed
-- Release ZIP bersih: tidak ada file `.py`, tidak ada packaging artifacts
-- `CHECKSUMS.txt` SHA-256 diperbarui untuk semua file
-
-### 🌐 Overlay In-Game — 7 Bahasa
-- `bbport_overlay.cpp`, `bbport_settings.cpp`, `bbport_menu_es.cpp` diupdate
-- `MenuLanguage` enum diperluas ke 7 bahasa, `MenuText()` overload untuk setiap bahasa
-- Dynamic CJK font merging (Meiryo/YaHei) untuk Jepang dan Mandarin
 
 ## [v2.1.0] - 2026-11-01
 ### 🚀 Highlights
